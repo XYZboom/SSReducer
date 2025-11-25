@@ -43,6 +43,17 @@ dependencies {
         "com.jetbrains.intellij.java:java-frontback-psi-impl",
         "com.jetbrains.intellij.java:java-psi",
         "com.jetbrains.intellij.java:java-psi-impl",
+        // more dependency to edit PSI tree
+        "com.jetbrains.intellij.java:java-impl",
+        "com.jetbrains.intellij.platform:code-style",
+        "com.jetbrains.intellij.platform:code-style-impl",
+        "com.jetbrains.intellij.platform:project-model",
+        "com.jetbrains.intellij.platform:lang",
+        "com.jetbrains.intellij.platform:lang-impl",
+        "com.jetbrains.intellij.platform:ide-core",
+        "com.jetbrains.intellij.java:java-frontback-impl",
+        "com.jetbrains.intellij.platform:project-model-impl",
+        "com.jetbrains.intellij.platform:configuration-store-impl",
     ).forEach {
         implementation("$it:$aaIntellijVersion") { isTransitive = false }
     }
@@ -105,7 +116,7 @@ tasks.test {
 }
 
 kotlin {
-    jvmToolchain(11)
+    jvmToolchain(17)
     compilerOptions {
         extraWarnings.set(true)
         jvmDefault.set(JvmDefaultMode.ENABLE)

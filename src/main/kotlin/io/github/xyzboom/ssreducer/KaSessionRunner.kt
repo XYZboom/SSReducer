@@ -24,11 +24,24 @@ import com.intellij.mock.MockProject
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.runWriteAction
+import com.intellij.openapi.options.SchemeManagerFactory
 import com.intellij.openapi.util.Disposer
-import com.intellij.psi.*
+import com.intellij.pom.PomModel
+import com.intellij.pom.core.impl.PomModelImpl
+import com.intellij.pom.tree.TreeAspect
+import com.intellij.psi.PsiTreeChangeAdapter
+import com.intellij.psi.PsiTreeChangeListener
+import com.intellij.psi.codeStyle.*
+import com.intellij.psi.impl.source.codeStyle.IndentHelper
+import com.intellij.psi.impl.source.codeStyle.IndentHelperImpl
+import com.intellij.psi.impl.source.codeStyle.PersistableCodeStyleSchemes
+import com.intellij.psi.impl.source.tree.JavaTreeCopyHandler
+import com.intellij.psi.impl.source.tree.TreeCopyHandler
 import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.util.concurrency.annotations.RequiresReadLock
 import com.intellij.util.ui.EDT
+import io.github.xyzboom.ssreducer.kotlin.MockCodeStyle
+import io.github.xyzboom.ssreducer.kotlin.MockSchemeManagerFactory
 import org.jetbrains.kotlin.analysis.api.KaExperimentalApi
 import org.jetbrains.kotlin.analysis.api.KaIdeApi
 import org.jetbrains.kotlin.analysis.api.KaImplementationDetail
@@ -36,11 +49,16 @@ import org.jetbrains.kotlin.analysis.api.analyze
 import org.jetbrains.kotlin.analysis.api.components.KaCompilationResult
 import org.jetbrains.kotlin.analysis.api.components.KaCompilerTarget
 import org.jetbrains.kotlin.analysis.api.fir.utils.KaFirCacheCleaner
+import org.jetbrains.kotlin.analysis.api.impl.base.permissions.KaBaseAnalysisPermissionRegistry
 import org.jetbrains.kotlin.analysis.api.impl.base.util.LibraryUtils
+import org.jetbrains.kotlin.analysis.api.permissions.KaAnalysisPermissionRegistry
 import org.jetbrains.kotlin.analysis.api.platform.KotlinMessageBusProvider
 import org.jetbrains.kotlin.analysis.api.platform.KotlinPlatformSettings
 import org.jetbrains.kotlin.analysis.api.platform.KotlinProjectMessageBusProvider
-import org.jetbrains.kotlin.analysis.api.platform.declarations.*
+import org.jetbrains.kotlin.analysis.api.platform.declarations.KotlinAnnotationsResolverFactory
+import org.jetbrains.kotlin.analysis.api.platform.declarations.KotlinDeclarationProviderFactory
+import org.jetbrains.kotlin.analysis.api.platform.declarations.KotlinDeclarationProviderMerger
+import org.jetbrains.kotlin.analysis.api.platform.declarations.KotlinDirectInheritorsProvider
 import org.jetbrains.kotlin.analysis.api.platform.lifetime.KotlinAlwaysAccessibleLifetimeTokenFactory
 import org.jetbrains.kotlin.analysis.api.platform.lifetime.KotlinLifetimeTokenFactory
 import org.jetbrains.kotlin.analysis.api.platform.modification.KotlinModificationTrackerFactory
@@ -56,7 +74,9 @@ import org.jetbrains.kotlin.analysis.api.standalone.base.KotlinStandalonePlatfor
 import org.jetbrains.kotlin.analysis.api.standalone.base.declarations.KotlinStandaloneAnnotationsResolverFactory
 import org.jetbrains.kotlin.analysis.api.standalone.base.declarations.KotlinStandaloneDeclarationProviderFactory
 import org.jetbrains.kotlin.analysis.api.standalone.base.declarations.KotlinStandaloneDeclarationProviderMerger
+import org.jetbrains.kotlin.analysis.api.standalone.base.declarations.KotlinStandaloneFirDirectInheritorsProvider
 import org.jetbrains.kotlin.analysis.api.standalone.base.modification.KotlinStandaloneModificationTrackerFactory
+import org.jetbrains.kotlin.analysis.api.standalone.base.packages.KotlinStandalonePackageProviderFactory
 import org.jetbrains.kotlin.analysis.api.standalone.base.permissions.KotlinStandaloneAnalysisPermissionOptions
 import org.jetbrains.kotlin.analysis.api.standalone.base.projectStructure.FirStandaloneServiceRegistrar
 import org.jetbrains.kotlin.analysis.api.standalone.base.projectStructure.StandaloneProjectFactory
@@ -67,19 +87,13 @@ import org.jetbrains.kotlin.cli.jvm.compiler.KotlinCoreApplicationEnvironmentMod
 import org.jetbrains.kotlin.cli.jvm.compiler.KotlinCoreEnvironment
 import org.jetbrains.kotlin.cli.jvm.compiler.KotlinCoreProjectEnvironment
 import org.jetbrains.kotlin.cli.jvm.compiler.setupIdeaStandaloneExecution
-import org.jetbrains.kotlin.config.ApiVersion
-import org.jetbrains.kotlin.config.JvmTarget
-import org.jetbrains.kotlin.config.LanguageVersion
-import org.jetbrains.kotlin.config.LanguageVersionSettingsImpl
+import org.jetbrains.kotlin.config.*
 import org.jetbrains.kotlin.fir.declarations.SealedClassInheritorsProvider
 import org.jetbrains.kotlin.load.kotlin.PackagePartProvider
 import org.jetbrains.kotlin.platform.jvm.JvmPlatforms
 import org.jetbrains.kotlin.psi.KtFile
 import java.io.File
 import java.nio.file.Path
-import org.jetbrains.kotlin.analysis.api.standalone.base.declarations.KotlinStandaloneFirDirectInheritorsProvider
-import org.jetbrains.kotlin.analysis.api.standalone.base.packages.KotlinStandalonePackageProviderFactory
-import org.jetbrains.kotlin.config.CompilerConfiguration
 
 @Suppress("UnstableApiUsage")
 class KaSessionRunner(
@@ -192,8 +206,8 @@ class KaSessionRunner(
             )
 
         kotlinCoreProjectEnvironment.registerApplicationServices(
-            org.jetbrains.kotlin.analysis.api.permissions.KaAnalysisPermissionRegistry::class.java,
-            org.jetbrains.kotlin.analysis.api.impl.base.permissions.KaBaseAnalysisPermissionRegistry::class.java
+            KaAnalysisPermissionRegistry::class.java,
+            KaBaseAnalysisPermissionRegistry::class.java
         )
         kotlinCoreProjectEnvironment.registerApplicationServices(
             KotlinAnalysisPermissionOptions::class.java,
@@ -212,6 +226,58 @@ class KaSessionRunner(
 
         CoreApplicationEnvironment.registerExtensionPoint(
             project.extensionArea, PsiTreeChangeListener.EP.name, PsiTreeChangeAdapter::class.java
+        )
+        // this area is different from project.extensionArea
+        val extensionArea = kotlinCoreProjectEnvironment.environment.application.extensionArea
+        CoreApplicationEnvironment.registerExtensionPoint(
+            extensionArea, TreeCopyHandler.EP_NAME, JavaTreeCopyHandler::class.java
+        )
+        kotlinCoreProjectEnvironment.registerApplicationServices(
+            IndentHelper::class.java,
+            IndentHelperImpl::class.java
+        )
+        project.registerService(
+            ProjectCodeStyleSettingsManager::class.java,
+            ProjectCodeStyleSettingsManager::class.java
+        )
+        kotlinCoreProjectEnvironment.registerApplicationServices(
+            CodeStyleSettingsService::class.java,
+            CodeStyleSettingsServiceImpl::class.java
+        )
+        CoreApplicationEnvironment.registerExtensionPoint(
+            extensionArea, CodeStyleSettingsProvider.EXTENSION_POINT_NAME, MockCodeStyle::class.java
+        )
+        CoreApplicationEnvironment.registerExtensionPoint(
+            extensionArea, LanguageCodeStyleSettingsProvider.EP_NAME, MockCodeStyle::class.java
+        )
+        CoreApplicationEnvironment.registerExtensionPoint(
+            extensionArea, LanguageCodeStyleSettingsContributor.EP_NAME, LanguageCodeStyleSettingsContributor::class.java
+        )
+        CoreApplicationEnvironment.registerExtensionPoint(
+            extensionArea, FileIndentOptionsProvider.EP_NAME, DetectableIndentOptionsProvider::class.java
+        )
+        CoreApplicationEnvironment.registerExtensionPoint(
+            extensionArea, FileTypeIndentOptionsProvider.EP_NAME, FileTypeIndentOptionsProvider::class.java
+        )
+        kotlinCoreProjectEnvironment.registerApplicationServices(
+            CodeStyleSchemes::class.java,
+            PersistableCodeStyleSchemes::class.java
+        )
+        kotlinCoreProjectEnvironment.registerApplicationServices(
+            SchemeManagerFactory::class.java,
+            MockSchemeManagerFactory::class.java
+        )
+        kotlinCoreProjectEnvironment.registerApplicationServices(
+            AppCodeStyleSettingsManager::class.java,
+            AppCodeStyleSettingsManager::class.java
+        )
+        project.registerService(
+            PomModel::class.java,
+            PomModelImpl::class.java
+        )
+        project.registerService(
+            TreeAspect::class.java,
+            TreeAspect::class.java
         )
         return Triple(
             StandaloneAnalysisAPISession(kotlinCoreProjectEnvironment) {
