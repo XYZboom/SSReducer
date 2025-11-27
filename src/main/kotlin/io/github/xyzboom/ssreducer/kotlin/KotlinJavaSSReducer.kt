@@ -134,6 +134,10 @@ class KotlinJavaSSReducer : CliktCommand(), IReducer {
             var currentLevel = 1
             while (currentLevel <= currentGroup.maxLevel) {
                 val currentElements = currentGroup.elements.filter { it.value == currentLevel }.keys.toList()
+                if (currentElements.isEmpty()) {
+                    currentLevel++
+                    continue
+                }
                 val notCurrentElements = currentGroup.elements.filter { it.value != currentLevel }
                 val ddmin = DDMin {
                     val group = currentGroup.copyOf(it.associateWith { currentLevel } + notCurrentElements)

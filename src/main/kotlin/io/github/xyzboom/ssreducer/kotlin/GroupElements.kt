@@ -1,28 +1,13 @@
 package io.github.xyzboom.ssreducer.kotlin
 
+import com.intellij.lang.jvm.types.JvmType
 import com.intellij.openapi.project.Project
-import com.intellij.psi.JavaRecursiveElementVisitor
-import com.intellij.psi.PsiAssignmentExpression
-import com.intellij.psi.PsiCall
-import com.intellij.psi.PsiCallExpression
-import com.intellij.psi.PsiClass
-import com.intellij.psi.PsiClassType
-import com.intellij.psi.PsiElement
-import com.intellij.psi.PsiElementFactory
-import com.intellij.psi.PsiExpressionStatement
-import com.intellij.psi.PsiField
-import com.intellij.psi.PsiFile
-import com.intellij.psi.PsiJavaFile
-import com.intellij.psi.PsiMethod
-import com.intellij.psi.PsiNamedElement
-import com.intellij.psi.PsiPrimitiveType
-import com.intellij.psi.PsiReferenceExpression
-import com.intellij.psi.PsiType
-import com.intellij.psi.PsiTypes
+import com.intellij.psi.*
 import com.intellij.psi.util.PsiTreeUtil
 import org.jetbrains.kotlin.psi.KtVisitorVoid
 import kotlin.math.max
 
+@Suppress("UnstableApiUsage")
 class GroupElements(
     val project: Project,
     val elements: Map<PsiWrapper, Int>,
@@ -34,7 +19,13 @@ class GroupElements(
     companion object {
 
         fun isDecl(element: PsiElement): Boolean {
-            return element is PsiNamedElement
+            if (element !is PsiNamedElement) {
+                return false
+            }
+            if (element is PsiParameter) {
+                return element.parent !is PsiCatchSection
+            }
+            return true
         }
 
         fun groupElements(project: Project, files: Collection<PsiFile>): GroupElements {
@@ -164,6 +155,13 @@ class GroupElements(
         }
     }
 
+    val JvmType.defaultValue: String
+        get() = if (this is PsiType) {
+            defaultValue
+        } else {
+            "(Void) null"
+        }
+
     val PsiType.defaultValue: String
         get() = if (this is PsiClassType) {
             val clazz = resolve()
@@ -194,7 +192,13 @@ class GroupElements(
         if (returnType != null) {
             return returnType.defaultValue
         } else {
-            val defaultClassName = method.containingClass?.qualifiedName ?: "Object"
+            val clazz = method.containingClass
+            val defaultClassName = if (clazz != null) {
+                if (!clazz.shouldBeDeleted()) {
+                    clazz.qualifiedName ?: "Object"
+                } else "Object"
+            } else "Object"
+
             return "(${defaultClassName}) null"
         }
     }
@@ -213,6 +217,18 @@ class GroupElements(
         }
     }
 
+    fun createCallForConstructor(element: PsiMethod, context: PsiElement?): PsiElement {
+        val parameters = element.parameters
+        val parameterDefaultValues = mutableListOf<String>()
+        for (parameter in parameters) {
+            parameterDefaultValues.add(parameter.type.defaultValue)
+        }
+        val typeText = element.containingClass?.qualifiedName ?: "Object"
+        return javaParserFacade.createExpressionFromText(
+            "new ${typeText}(${parameterDefaultValues.joinToString(", ")})", context
+        )
+    }
+
     private fun editElementRef2Method(element: PsiElement, target: PsiMethod) {
         when {
             element.parent is PsiCallExpression -> {
@@ -224,22 +240,63 @@ class GroupElements(
             }
 
             element is PsiCall -> {
-                element.replaceOrDeleteParentStatement {
-                    javaParserFacade.createExpressionFromText(getDefaultValueTextForMethod(target), element.context)
+                if (target.isConstructor) {
+                    // the constructor was deleted but we can still call another.
+                    val clazz = target.containingClass
+                    if (clazz != null && clazz.shouldBeDeleted()) {
+                        return element.replaceOrDeleteParentStatement {
+                            javaParserFacade.createExpressionFromText(
+                                "new Object()", element.context
+                            )
+                        }
+                    }
+                    val resolveHelper = JavaPsiFacade.getInstance(project).resolveHelper
+                    val accessibleConstructor = clazz?.constructors?.firstOrNull {
+                        resolveHelper.isAccessible(it, element, null)
+                                && !it.shouldBeDeleted()
+                    }
+                    if (accessibleConstructor != null) {
+                        element.replaceOrDeleteParentStatement {
+                            createCallForConstructor(accessibleConstructor, element.context)
+                        }
+                    } else if (clazz?.constructors?.all { it.shouldBeDeleted() } == true) {
+                        // this means we can call default constructor
+                        val classAccessible = resolveHelper.isAccessible(clazz, element, null)
+                        if (classAccessible) {
+                            element.replaceOrDeleteParentStatement {
+                                javaParserFacade.createExpressionFromText(
+                                    "new ${clazz.qualifiedName}()",
+                                    element.context
+                                )
+                            }
+                        } else {
+                            element.replaceOrDeleteParentStatement {
+                                javaParserFacade.createExpressionFromText(
+                                    getDefaultValueTextForMethod(target),
+                                    element.context
+                                )
+                            }
+                        }
+                    } else {
+                        element.replaceOrDeleteParentStatement {
+                            javaParserFacade.createExpressionFromText(
+                                getDefaultValueTextForMethod(target),
+                                element.context
+                            )
+                        }
+                    }
+                } else {
+                    element.replaceOrDeleteParentStatement {
+                        javaParserFacade.createExpressionFromText(getDefaultValueTextForMethod(target), element.context)
+                    }
                 }
             }
         }
     }
 
-    private fun editElementRef2Field(element: PsiElement, target: PsiField) {
+    private fun editElementRef2Variable(element: PsiElement, target: PsiVariable) {
         val parent = element.parent ?: return
-        if (parent !is PsiAssignmentExpression) {
-            element.replaceOrDeleteParentStatement {
-                javaParserFacade.createExpressionFromText(
-                    target.type.defaultValue, element.context
-                )
-            }
-        } else {
+        if (parent is PsiAssignmentExpression) {
             if (parent.lExpression === element) {
                 val rExpr = parent.rExpression
                 if (rExpr != null) {
@@ -260,6 +317,14 @@ class GroupElements(
                     )
                 }
             }
+        } else if (parent is PsiPostfixExpression || parent is PsiPrefixExpression) {
+            editElementRef2Variable(parent, target)
+        } else {
+            element.replaceOrDeleteParentStatement {
+                javaParserFacade.createExpressionFromText(
+                    target.type.defaultValue, element.context
+                )
+            }
         }
     }
 
@@ -267,23 +332,29 @@ class GroupElements(
         when (target) {
             is PsiClass -> editElementRef2Class(element, target)
             is PsiMethod -> editElementRef2Method(element, target)
-            is PsiField -> editElementRef2Field(element, target)
+            is PsiVariable -> editElementRef2Variable(element, target)
         }
         // todo other cases
     }
 
-    fun shouldEdit(element: PsiElement, target: PsiElement): Boolean {
-        if (target is PsiClass) {
-            return true
+    fun deleteElement(element: PsiElement) {
+        if (element !is PsiLocalVariable) {
+            element.delete()
+            return
         }
-        if (target is PsiMethod) {
-            return true
+        val initializer = element.initializer
+        if (initializer == null) {
+            element.delete()
+            return
         }
-        if (target is PsiField) {
-            return true
+        if (initializer.canBeStatement()) {
+            val statement = javaParserFacade.createStatementFromText("new Object();", element.context)
+                    as PsiExpressionStatement
+            statement.expression.replace(initializer)
+            element.replace(statement)
+        } else {
+            element.delete()
         }
-        // todo other cases
-        return false
     }
 
     fun PsiElement?.shouldBeDeleted(): Boolean {
@@ -332,7 +403,6 @@ class GroupElements(
                 val callTarget = if (element is PsiCall) {
                     val method = element.resolveMethod()
                     if (method != null && !method.shouldBeDeleted()) {
-                        @Suppress("UnstableApiUsage")
                         for ((i, param) in method.parameters.withIndex()) {
                             val sourceParam = param.sourceElement
                             if (sourceParam.shouldBeDeleted()) {
@@ -345,10 +415,8 @@ class GroupElements(
                 val allTargets = if (callTarget != null) targets + callTarget else targets
                 for (target in allTargets) {
                     if (target.shouldBeDeleted()) {
-                        if (shouldEdit(element, target)) {
-                            needEdit.add(element to target)
-                            break
-                        }
+                        needEdit.add(element to target)
+                        break
                     }
                 }
             }
@@ -357,7 +425,14 @@ class GroupElements(
                 object : JavaRecursiveElementVisitor() {
                     override fun visitElement(element: PsiElement) {
                         if (!element.isValid) return
-                        if (element in needDeleteElements) return
+                        if (element in needDeleteElements) {
+                            // we may replace initializer with the whole variable
+                            // For example: Foo foo = bar.getFoo();
+                            // So we must visit the initializer
+                            if (element is PsiLocalVariable) {
+                                element.initializer?.let { super.visitElement(it) }
+                            }
+                        }
                         recordNeedEdit(element)
                         super.visitElement(element)
                     }
@@ -383,21 +458,14 @@ class GroupElements(
             file.accept(visitor)
         }
 
-        fun PsiElement.anyParentNeedDelete(): Boolean {
-            if (this in needDeleteElements) return true
-            if (parent == null) return false
-            return parent.anyParentNeedDelete()
-        }
-
         for ((element, target) in needEdit) {
             if (!element.isValid) continue
-            if (element.anyParentNeedDelete()) continue
             editElement(element, target)
         }
 
         for (element in needDeleteElements) {
             try {
-                element.delete()
+                deleteElement(element)
             } catch (e: Exception) {
                 e
             }

@@ -6,7 +6,9 @@ import kotlin.math.min
 class DDMin<T>(private val testFunc: (List<T>) -> Boolean) {
 
     fun execute(input: List<T>): List<T> {
-        if (input.size <= 1) {
+        if (input.isEmpty()) return input
+        if (input.size == 1) {
+            if (testFunc(emptyList())) return emptyList()
             return input
         }
 
@@ -25,9 +27,11 @@ class DDMin<T>(private val testFunc: (List<T>) -> Boolean) {
         // split input into n parts
         val parts = partition(input, n)
 
-        for (part in parts) {
-            if (testFunc(part)) {
-                return executeRecursive(part, 2)
+        if (n > 2) {
+            for (part in parts) {
+                if (testFunc(part)) {
+                    return executeRecursive(part, 2)
+                }
             }
         }
 
