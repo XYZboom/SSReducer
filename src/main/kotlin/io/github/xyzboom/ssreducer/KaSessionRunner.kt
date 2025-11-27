@@ -20,6 +20,12 @@
 package io.github.xyzboom.ssreducer
 
 import com.intellij.core.CoreApplicationEnvironment
+import com.intellij.formatting.ExcludedFileFormattingRestriction
+import com.intellij.formatting.Formatter
+import com.intellij.formatting.FormatterImpl
+import com.intellij.formatting.service.CoreFormattingService
+import com.intellij.formatting.service.FormattingService
+import com.intellij.lang.LanguageFormattingRestriction
 import com.intellij.mock.MockProject
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
@@ -32,9 +38,11 @@ import com.intellij.pom.tree.TreeAspect
 import com.intellij.psi.PsiTreeChangeAdapter
 import com.intellij.psi.PsiTreeChangeListener
 import com.intellij.psi.codeStyle.*
+import com.intellij.psi.impl.source.codeStyle.CodeStyleManagerImpl
 import com.intellij.psi.impl.source.codeStyle.IndentHelper
 import com.intellij.psi.impl.source.codeStyle.IndentHelperImpl
 import com.intellij.psi.impl.source.codeStyle.PersistableCodeStyleSchemes
+import com.intellij.psi.impl.source.codeStyle.PostFormatProcessor
 import com.intellij.psi.impl.source.tree.JavaTreeCopyHandler
 import com.intellij.psi.impl.source.tree.TreeCopyHandler
 import com.intellij.psi.search.GlobalSearchScope
@@ -278,6 +286,36 @@ class KaSessionRunner(
         project.registerService(
             TreeAspect::class.java,
             TreeAspect::class.java
+        )
+        project.registerService(
+            CodeStyleManager::class.java,
+            CodeStyleManagerImpl::class.java
+        )
+        CoreApplicationEnvironment.registerExtensionPoint(
+            extensionArea, FormattingService.EP_NAME, FormattingService::class.java
+        )
+        extensionArea.getExtensionPoint(FormattingService.EP_NAME)
+            .registerExtension(CoreFormattingService(), kotlinCoreProjectEnvironment.parentDisposable)
+        CoreApplicationEnvironment.registerExtensionPoint(
+            extensionArea, LanguageFormattingRestriction.EP_NAME, LanguageFormattingRestriction::class.java
+        )
+        extensionArea.getExtensionPoint(LanguageFormattingRestriction.EP_NAME).apply {
+            registerExtension(ExcludedFileFormattingRestriction(), kotlinCoreProjectEnvironment.parentDisposable)
+            val clazz = Class.forName("com.intellij.lang.InvalidPsiAutoFormatRestriction")
+            val instance = clazz.getDeclaredConstructor().apply {
+                isAccessible = true
+            }.newInstance() as LanguageFormattingRestriction
+            registerExtension(instance, kotlinCoreProjectEnvironment.parentDisposable)
+        }
+        CoreApplicationEnvironment.registerExtensionPoint(
+            extensionArea, ExternalFormatProcessor.EP_NAME, ExternalFormatProcessor::class.java
+        )
+        kotlinCoreProjectEnvironment.registerApplicationServices(
+            Formatter::class.java,
+            FormatterImpl::class.java
+        )
+        CoreApplicationEnvironment.registerExtensionPoint(
+            extensionArea, PostFormatProcessor.EP_NAME, PostFormatProcessor::class.java
         )
         return Triple(
             StandaloneAnalysisAPISession(kotlinCoreProjectEnvironment) {

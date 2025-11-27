@@ -3,22 +3,31 @@ package io.github.xyzboom.ssreducer.kotlin
 import com.intellij.openapi.util.Key
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiManager
+import java.lang.ref.WeakReference
 import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
 
 @OptIn(ExperimentalUuidApi::class)
-class PsiWrapper(val element: PsiElement, putUuid: Boolean = false) {
+class PsiWrapper private constructor(val element: PsiElement) {
     companion object {
         val UUID_KEY = Key.create<Uuid>("UUID_KEY")
+        val WRAPPER_KEY = Key.create<WeakReference<PsiWrapper>>("WRAPPER_KEY")
+        fun of(element: PsiElement): PsiWrapper {
+            val wrapper = element.getUserData(WRAPPER_KEY)?.get()
+            if (wrapper != null) {
+                return wrapper
+            }
+            val createNewWrapper = PsiWrapper(element)
+            element.putUserData(WRAPPER_KEY, WeakReference(createNewWrapper))
+            val oriUuid = element.getCopyableUserData(UUID_KEY)
+            if (oriUuid == null) {
+                element.putCopyableUserData(UUID_KEY, Uuid.random())
+            }
+            return createNewWrapper
+        }
     }
 
     private val manager = PsiManager.getInstance(element.project)
-
-    init {
-        if (putUuid && uuid == null) {
-            element.putCopyableUserData(UUID_KEY, Uuid.random())
-        }
-    }
 
     private val uuid: Uuid?
         get() = element.getCopyableUserData(UUID_KEY)

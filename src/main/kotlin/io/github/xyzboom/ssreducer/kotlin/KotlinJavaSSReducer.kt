@@ -148,42 +148,7 @@ class KotlinJavaSSReducer : CliktCommand(), IReducer {
                 ddmin.execute(currentElements)
                 currentLevel++
             }
-            /*val new2OldCopiedRoots = copiedRoots.map { it.value to it.key }.toMap()
-            var currentElements = GroupedElementsOld.groupElements(
-                project, copiedRoots.values, copiedRoots)
-
-            fun reduceFiles(initGroup: GroupedElementsOld): GroupedElementsOld {
-                val files = initGroup.files.toList()
-                val ddmin = DDMin { remainFiles: List<PsiFile> ->
-                    // psiRoots has 2 copy: copiedRoots and copyMap
-                    // copiedRoots is the global backup.
-                    // If current edit is a success, this edit will be applied into copiedRoots.
-                    val copyMap = copiedRoots.values.associate { it.originalFile to it.copy() as PsiFile }
-                    val group = GroupedElementsOld.groupElements(project, copyMap.values, copyMap)
-                    val copiedRemainFiles = remainFiles.map { copyMap[it.originalFile]!! }
-                    val newGroup = group.copy(files = copiedRemainFiles.toSet())
-                    newGroup.reconstructDependencies()
-                    val predictResult = predict(newGroup.fileContents())
-                    if (predictResult) {
-                        currentElements = currentElements.copy(files = remainFiles.toSet())
-                        currentElements.reconstructDependencies()
-                    }
-                    return@DDMin predictResult
-                }
-                val remain = ddmin.execute(files)
-                return initGroup.copy(files = remain.toSet())
-            }
-
-            currentElements.reconstructDependencies()
-
-            reduceFiles(currentElements)
-            for (psiRoot in psiRoots) {
-                if (psiRoot is PsiJavaFile) {
-                    println()
-                } else if (psiRoot is KtFile) {
-                    println()
-                }
-            }*/
+            println()
         }
     }
 
