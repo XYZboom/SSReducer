@@ -10,7 +10,7 @@ import kotlin.math.max
 @Suppress("UnstableApiUsage")
 class GroupElements(
     val project: Project,
-    val elements: Map<PsiWrapper, Int>,
+    val elements: MutableMap<PsiWrapper, Int>,
     val elementsInOriProgram: Set<PsiWrapper>,
     val maxLevel: Int,
 ) {
@@ -19,13 +19,12 @@ class GroupElements(
     companion object {
 
         fun isDecl(element: PsiElement): Boolean {
-            if (element !is PsiNamedElement) {
-                return false
+            return when (element) {
+                is PsiParameter -> element.parent !is PsiCatchSection
+                is PsiNamedElement -> true
+                is PsiStatement -> true
+                else -> false
             }
-            if (element is PsiParameter) {
-                return element.parent !is PsiCatchSection
-            }
-            return true
         }
 
         fun groupElements(project: Project, files: Collection<PsiFile>): GroupElements {
@@ -357,8 +356,9 @@ class GroupElements(
         }
     }
 
-    fun PsiElement?.shouldBeDeleted(): Boolean {
+    fun PsiElement?.shouldBeDeleted(shouldDelete: Set<PsiWrapper> = emptySet()): Boolean {
         val wrapper = PsiWrapper.of(this ?: return false)
+        if (wrapper in shouldDelete) return true
         return wrapper in elementsInOriProgram && wrapper !in elements
     }
 
@@ -370,27 +370,34 @@ class GroupElements(
         val needDeleteElements = mutableSetOf<PsiElement>()
 
         for (file in files) {
-            fun recordNeedDelete(element: PsiElement) {
-                if (!element.isValid) return
-                if (!isDecl(element)) return
-                if (element.shouldBeDeleted()) {
+            var shouldDeleteChildren = 0
+            fun recordNeedDelete(element: PsiElement): Boolean {
+                if (!element.isValid) return false
+                if (!isDecl(element)) return false
+                if (element.shouldBeDeleted() || shouldDeleteChildren > 0) {
+                    elements.remove(PsiWrapper.of(element))
                     needDeleteElements.add(element)
+                    return true
                 }
-                return
+                return false
             }
 
             val visitor = if (file is PsiJavaFile) {
                 object : JavaRecursiveElementVisitor() {
                     override fun visitElement(element: PsiElement) {
-                        recordNeedDelete(element)
+                        val needDelete = recordNeedDelete(element)
+                        if (needDelete) shouldDeleteChildren++
                         super.visitElement(element)
+                        if (needDelete) shouldDeleteChildren--
                     }
                 }
             } else {
                 object : KtVisitorVoid() {
                     override fun visitElement(element: PsiElement) {
-                        recordNeedDelete(element)
+                        val needDelete = recordNeedDelete(element)
+                        if (needDelete) shouldDeleteChildren++
                         super.visitElement(element)
+                        if (needDelete) shouldDeleteChildren--
                     }
                 }
             }
@@ -464,6 +471,7 @@ class GroupElements(
         }
 
         for (element in needDeleteElements) {
+            if (!element.isValid) continue
             try {
                 deleteElement(element)
             } catch (e: Exception) {
