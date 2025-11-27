@@ -6,7 +6,6 @@ import com.github.ajalt.clikt.parameters.options.*
 import com.github.ajalt.clikt.parameters.types.enum
 import com.github.ajalt.clikt.parameters.types.file
 import com.intellij.psi.PsiFile
-import com.intellij.psi.PsiJavaFile
 import io.github.xyzboom.ssreducer.IReducer
 import io.github.xyzboom.ssreducer.KaSessionRunner
 import io.github.xyzboom.ssreducer.algorithm.DDMin
@@ -15,7 +14,6 @@ import org.jetbrains.kotlin.analysis.api.KaExperimentalApi
 import org.jetbrains.kotlin.analysis.api.projectStructure.KaSourceModule
 import org.jetbrains.kotlin.config.JvmTarget
 import org.jetbrains.kotlin.config.LanguageVersion
-import org.jetbrains.kotlin.psi.KtFile
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
@@ -54,9 +52,10 @@ class KotlinJavaSSReducer : CliktCommand(), IReducer {
             .enum<LanguageVersion> { it.versionString }
             .default(LanguageVersion.FIRST_NON_DEPRECATED)
     }
-    private val jdkHome by run<OptionWithValues<File?, File, File>> {
+    private val jdkHome by run<OptionWithValues<File, File, File>> {
         option("--jdkHome")
             .file(mustExist = true, canBeDir = true, canBeFile = false, mustBeReadable = true)
+            .default(File(System.getProperty("java.home")!!))
     }
     private val moduleName by run<OptionWithValues<String, String, String>> {
         option("--moduleName")
@@ -129,31 +128,62 @@ class KotlinJavaSSReducer : CliktCommand(), IReducer {
             val project = session.project
             val module = modules[0] as KaSourceModule
             val psiRoots = module.psiRoots.filterIsInstance<PsiFile>()
-            val copyMap = psiRoots.associateWith { it.copy() as PsiFile }
-            val newRoots = copyMap.values
-            val groupedElements = GroupedElements.groupElements(project, newRoots, copyMap)
-
-            fun reduceFiles(initGroup: GroupedElements): GroupedElements {
-                val files = initGroup.files.toList()
+            val initGroup = GroupElements.groupElements(project, psiRoots)
+            val copiedRoots = psiRoots.map { it.copy() as PsiFile }
+            var currentGroup = GroupElements.groupElements(project, copiedRoots)
+            var currentLevel = 1
+            while (currentLevel <= currentGroup.maxLevel) {
+                val currentElements = currentGroup.elements.filter { it.value == currentLevel }.keys.toList()
+                val notCurrentElements = currentGroup.elements.filter { it.value != currentLevel }
                 val ddmin = DDMin {
-                    val newGroup = initGroup.copy(files = it.toSet())
+                    val group = currentGroup.copyOf(it.associateWith { currentLevel } + notCurrentElements)
+                    group.reconstructDependencies()
+                    val fileContents = group.fileContents()
+                    val predictResult = predict(fileContents)
+                    if (predictResult) {
+                        currentGroup = group.applyEdit()
+                    }
+                    return@DDMin predictResult
+                }
+                ddmin.execute(currentElements)
+                currentLevel++
+            }
+            /*val new2OldCopiedRoots = copiedRoots.map { it.value to it.key }.toMap()
+            var currentElements = GroupedElementsOld.groupElements(
+                project, copiedRoots.values, copiedRoots)
+
+            fun reduceFiles(initGroup: GroupedElementsOld): GroupedElementsOld {
+                val files = initGroup.files.toList()
+                val ddmin = DDMin { remainFiles: List<PsiFile> ->
+                    // psiRoots has 2 copy: copiedRoots and copyMap
+                    // copiedRoots is the global backup.
+                    // If current edit is a success, this edit will be applied into copiedRoots.
+                    val copyMap = copiedRoots.values.associate { it.originalFile to it.copy() as PsiFile }
+                    val group = GroupedElementsOld.groupElements(project, copyMap.values, copyMap)
+                    val copiedRemainFiles = remainFiles.map { copyMap[it.originalFile]!! }
+                    val newGroup = group.copy(files = copiedRemainFiles.toSet())
                     newGroup.reconstructDependencies()
-                    return@DDMin predict(newGroup.fileContents())
+                    val predictResult = predict(newGroup.fileContents())
+                    if (predictResult) {
+                        currentElements = currentElements.copy(files = remainFiles.toSet())
+                        currentElements.reconstructDependencies()
+                    }
+                    return@DDMin predictResult
                 }
                 val remain = ddmin.execute(files)
                 return initGroup.copy(files = remain.toSet())
             }
 
-            groupedElements.reconstructDependencies()
+            currentElements.reconstructDependencies()
 
-            reduceFiles(groupedElements)
-            for (psiRoot in newRoots) {
+            reduceFiles(currentElements)
+            for (psiRoot in psiRoots) {
                 if (psiRoot is PsiJavaFile) {
                     println()
                 } else if (psiRoot is KtFile) {
                     println()
                 }
-            }
+            }*/
         }
     }
 
