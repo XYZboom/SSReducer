@@ -11,6 +11,7 @@ import com.intellij.psi.PsiElementFactory
 import com.intellij.psi.PsiExpressionStatement
 import com.intellij.psi.PsiField
 import com.intellij.psi.PsiFile
+import com.intellij.psi.PsiJavaFile
 import com.intellij.psi.PsiMethod
 import com.intellij.psi.PsiNamedElement
 import com.intellij.psi.PsiPrimitiveType
@@ -18,8 +19,7 @@ import com.intellij.psi.PsiReferenceExpression
 import com.intellij.psi.PsiType
 import com.intellij.psi.PsiTypes
 import com.intellij.psi.util.PsiTreeUtil
-import org.jetbrains.kotlin.psi.KtElement
-import org.jetbrains.kotlin.psi.KtTreeVisitorVoid
+import org.jetbrains.kotlin.psi.KtVisitorVoid
 import kotlin.math.max
 
 class GroupElements(
@@ -29,31 +29,6 @@ class GroupElements(
     val maxLevel: Int,
 ) {
     private val javaParserFacade: PsiElementFactory = project.getService(PsiElementFactory::class.java)
-
-    open class JavaOrKotlinElementVisitor {
-        open fun enterElement(element: PsiElement) {}
-        open fun exitElement(element: PsiElement) {}
-
-        fun doVisit(element: PsiElement) {
-            if (element is KtElement) {
-                element.accept(object : KtTreeVisitorVoid() {
-                    override fun visitElement(element: PsiElement) {
-                        enterElement(element)
-                        super.visitElement(element)
-                        exitElement(element)
-                    }
-                })
-            } else {
-                element.accept(object : JavaRecursiveElementVisitor() {
-                    override fun visitElement(element: PsiElement) {
-                        enterElement(element)
-                        super.visitElement(element)
-                        exitElement(element)
-                    }
-                })
-            }
-        }
-    }
 
     companion object {
 
@@ -65,21 +40,37 @@ class GroupElements(
             val elements = mutableMapOf<PsiWrapper, Int>()
             var maxLevel = 0
             for (file in files) {
-                val visitor = object : JavaOrKotlinElementVisitor() {
-                    val stack = ArrayDeque<PsiElement>()
-                    override fun enterElement(element: PsiElement) {
-                        stack.addFirst(element)
-                        if (isDecl(element)) {
-                            elements[PsiWrapper(element, true)] = stack.size
-                        }
-                        maxLevel = max(maxLevel, stack.size)
+                val stack = ArrayDeque<PsiElement>()
+                fun enterElement(element: PsiElement) {
+                    stack.addFirst(element)
+                    if (isDecl(element)) {
+                        elements[PsiWrapper(element, true)] = stack.size
                     }
+                    maxLevel = max(maxLevel, stack.size)
+                }
 
-                    override fun exitElement(element: PsiElement) {
-                        require(stack.removeFirst() === element)
+                fun exitElement(element: PsiElement) {
+                    require(stack.removeFirst() === element)
+                }
+
+                val visitor = if (file is PsiJavaFile) {
+                    object : JavaRecursiveElementVisitor() {
+                        override fun visitElement(element: PsiElement) {
+                            enterElement(element)
+                            super.visitElement(element)
+                            exitElement(element)
+                        }
+                    }
+                } else {
+                    object : KtVisitorVoid() {
+                        override fun visitElement(element: PsiElement) {
+                            enterElement(element)
+                            super.visitElement(element)
+                            exitElement(element)
+                        }
                     }
                 }
-                visitor.doVisit(file)
+                file.accept(visitor)
             }
             return GroupElements(
                 project, elements, HashSet(elements.keys), maxLevel
@@ -101,19 +92,34 @@ class GroupElements(
         val copiedFiles = files.associateWith { it.copy() as PsiFile }
         val copiedElements = mutableMapOf<PsiWrapper, Int>()
         for ((oriFile, copiedFile) in copiedFiles) {
-            val visitor = object : JavaOrKotlinElementVisitor() {
-                override fun enterElement(element: PsiElement) {
-                    if (!isDecl(element)) {
-                        return
+            fun enterElement(element: PsiElement) {
+                if (!isDecl(element)) {
+                    return
+                }
+                val oriElement = PsiTreeUtil.findSameElementInCopy(element, oriFile)
+                val oriLevel = fromElements[PsiWrapper(oriElement)]
+                if (oriLevel != null) {
+                    copiedElements[PsiWrapper(element)] = oriLevel
+                }
+                return
+            }
+
+            val visitor = if (copiedFile is PsiJavaFile) {
+                object : JavaRecursiveElementVisitor() {
+                    override fun visitElement(element: PsiElement) {
+                        enterElement(element)
+                        super.visitElement(element)
                     }
-                    val oriElement = PsiTreeUtil.findSameElementInCopy(element, oriFile)
-                    val oriLevel = fromElements[PsiWrapper(oriElement)]
-                    if (oriLevel != null) {
-                        copiedElements[PsiWrapper(element)] = oriLevel
+                }
+            } else {
+                object : KtVisitorVoid() {
+                    override fun visitElement(element: PsiElement) {
+                        enterElement(element)
+                        super.visitElement(element)
                     }
                 }
             }
-            visitor.doVisit(copiedFile)
+            visitor.visitElement(copiedFile)
         }
         return GroupElements(
             project, copiedElements, elementsInOriProgram, maxLevel
@@ -274,39 +280,72 @@ class GroupElements(
         // we must resolve reference first. Otherwise, the reference will lose after delete.
         val needEdit = mutableListOf<Pair<PsiElement, PsiElement>>()
         for (file in files) {
-            val visitor = object : JavaOrKotlinElementVisitor() {
-                override fun enterElement(element: PsiElement) {
-                    if (!element.isValid) {
-                        return
-                    }
-
-                    val targets = element.references.mapNotNull { it.resolve() ?: return@mapNotNull null }
-                    for (target in targets) {
-                        val wrapTarget = PsiWrapper(target)
-                        if (wrapTarget in elementsInOriProgram && wrapTarget !in elements) {
-                            if (shouldEdit(element, target)) {
-                                needEdit.add(element to target)
-                                break
-                            }
+            fun recordNeedEdit(element: PsiElement) {
+                val targets = element.references.mapNotNull { it.resolve() ?: return@mapNotNull null }
+                for (target in targets) {
+                    val wrapTarget = PsiWrapper(target)
+                    if (wrapTarget in elementsInOriProgram && wrapTarget !in elements) {
+                        if (shouldEdit(element, target)) {
+                            needEdit.add(element to target)
+                            break
                         }
                     }
                 }
             }
-            visitor.doVisit(file)
+
+            val visitor = if (file is PsiJavaFile) {
+                object : JavaRecursiveElementVisitor() {
+                    override fun visitElement(element: PsiElement) {
+                        if (!element.isValid) return
+                        recordNeedEdit(element)
+                        super.visitElement(element)
+                    }
+
+                    override fun visitAssignmentExpression(expression: PsiAssignmentExpression) {
+                        // we need to edit right first because sometimes
+                        // we may replace the whole assignment with the right
+                        expression.rExpression?.accept(this)
+                        expression.lExpression.accept(this)
+                    }
+                }
+            } else {
+                object : KtVisitorVoid() {
+                    override fun visitElement(element: PsiElement) {
+                        if (!element.isValid) return
+                        recordNeedEdit(element)
+                        super.visitElement(element)
+                    }
+                }
+            }
+            file.accept(visitor)
         }
 
         val needDeleteElements = mutableSetOf<PsiElement>()
         for (file in files) {
-            val visitor = object : JavaOrKotlinElementVisitor() {
-                override fun enterElement(element: PsiElement) {
-                    if (!element.isValid) return
-                    if (!isDecl(element)) return
-                    if (PsiWrapper(element) !in elements) {
-                        needDeleteElements.add(element)
+            fun recordNeedDelete(element: PsiElement) {
+                if (!element.isValid) return
+                if (!isDecl(element)) return
+                if (PsiWrapper(element) !in elements) {
+                    needDeleteElements.add(element)
+                }
+                return
+            }
+            val visitor = if (file is PsiJavaFile) {
+                object : JavaRecursiveElementVisitor() {
+                    override fun visitElement(element: PsiElement) {
+                        recordNeedDelete(element)
+                        super.visitElement(element)
+                    }
+                }
+            } else {
+                object : KtVisitorVoid() {
+                    override fun visitElement(element: PsiElement) {
+                        recordNeedDelete(element)
+                        super.visitElement(element)
                     }
                 }
             }
-            visitor.doVisit(file)
+            file.accept(visitor)
         }
 
         fun PsiElement.anyParentNeedDelete(): Boolean {
