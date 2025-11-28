@@ -84,6 +84,8 @@ class KotlinJavaSSReducer : CliktCommand(), IReducer {
             .multiple(default = emptyList())
     }
 
+    private var predictTimes = 0
+
     private fun predict(fileContents: Map<String, String>): Boolean {
         val tempDir: Path = Files.createTempDirectory("kjSSReducer")
         tempDir.toFile().deleteOnExit()
@@ -109,6 +111,7 @@ class KotlinJavaSSReducer : CliktCommand(), IReducer {
             System.err.println(it)
         }
         val predictResult = process.waitFor()
+        predictTimes++
         return predictResult == 0
     }
 
@@ -128,7 +131,7 @@ class KotlinJavaSSReducer : CliktCommand(), IReducer {
             val project = session.project
             val module = modules[0] as KaSourceModule
             val psiRoots = module.psiRoots.filterIsInstance<PsiFile>()
-            val initGroup = GroupElements.groupElements(project, psiRoots)
+            GroupElements.groupElements(project, psiRoots)
             val copiedRoots = psiRoots.map { it.copy() as PsiFile }
             var currentGroup = GroupElements.groupElements(project, copiedRoots)
             var currentLevel = 1

@@ -10,8 +10,8 @@ import kotlin.math.max
 @Suppress("UnstableApiUsage")
 class GroupElements(
     val project: Project,
-    val elements: MutableMap<PsiWrapper, Int>,
-    val elementsInOriProgram: Set<PsiWrapper>,
+    val elements: MutableMap<PsiWrapper<*>, Int>,
+    val elementsInOriProgram: Set<PsiWrapper<*>>,
     val maxLevel: Int,
 ) {
     private val javaParserFacade: PsiElementFactory = project.getService(PsiElementFactory::class.java)
@@ -28,20 +28,22 @@ class GroupElements(
         }
 
         fun groupElements(project: Project, files: Collection<PsiFile>): GroupElements {
-            val elements = mutableMapOf<PsiWrapper, Int>()
+            val elements = mutableMapOf<PsiWrapper<*>, Int>()
             var maxLevel = 0
             for (file in files) {
                 val stack = ArrayDeque<PsiElement>()
                 fun enterElement(element: PsiElement) {
-                    stack.addFirst(element)
                     if (isDecl(element)) {
+                        stack.addFirst(element)
                         elements[PsiWrapper.of(element)] = stack.size
+                        maxLevel = max(maxLevel, stack.size)
                     }
-                    maxLevel = max(maxLevel, stack.size)
                 }
 
                 fun exitElement(element: PsiElement) {
-                    require(stack.removeFirst() === element)
+                    if (isDecl(element)) {
+                        require(stack.removeFirst() === element)
+                    }
                 }
 
                 val visitor = if (file is PsiJavaFile) {
@@ -75,13 +77,13 @@ class GroupElements(
         )
     }
 
-    fun copyOf(fromElements: Map<PsiWrapper, Int>): GroupElements {
+    fun copyOf(fromElements: Map<PsiWrapper<*>, Int>): GroupElements {
         val editedFrom = elements.keys.intersect(fromElements.keys)
 
         @Suppress("UNCHECKED_CAST")
         val files = editedFrom.filter { it.element is PsiFile }.map { it.element } as List<PsiFile>
         val copiedFiles = files.associateWith { it.copy() as PsiFile }
-        val copiedElements = mutableMapOf<PsiWrapper, Int>()
+        val copiedElements = mutableMapOf<PsiWrapper<*>, Int>()
         for ((oriFile, copiedFile) in copiedFiles) {
             fun enterElement(element: PsiElement) {
                 if (!isDecl(element)) {
@@ -356,7 +358,7 @@ class GroupElements(
         }
     }
 
-    fun PsiElement?.shouldBeDeleted(shouldDelete: Set<PsiWrapper> = emptySet()): Boolean {
+    fun PsiElement?.shouldBeDeleted(shouldDelete: Set<PsiWrapper<*>> = emptySet()): Boolean {
         val wrapper = PsiWrapper.of(this ?: return false)
         if (wrapper in shouldDelete) return true
         return wrapper in elementsInOriProgram && wrapper !in elements
@@ -478,5 +480,48 @@ class GroupElements(
                 e
             }
         }
+
+        removeUnusedImport(files)
+    }
+
+    private fun removeUnusedImport(files: List<PsiFile>) {
+        for (file in files) {
+            // key: the imported element
+            // value: the import statement
+            val unusedImports = mutableMapOf<PsiWrapper<*>, PsiImportStatement>()
+            val importLists = PsiTreeUtil.findChildrenOfType(file, PsiImportStatement::class.java)
+            for (importList in importLists) {
+                val imported = importList.resolve() ?: continue
+                unusedImports[PsiWrapper.of(imported)] = importList
+            }
+
+            val visitor = if (file is PsiJavaFile) {
+                object : JavaRecursiveElementVisitor() {
+                    override fun visitElement(element: PsiElement) {
+                        if (element is PsiImportList) {
+                            return
+                        }
+
+                        val targets = element.references.mapNotNull { it.resolve() ?: return@mapNotNull null }
+                        for (target in targets) {
+                            unusedImports.remove(PsiWrapper.of(target))
+                        }
+
+                        super.visitElement(element)
+                    }
+                }
+            } else {
+                object : KtVisitorVoid() {
+                    override fun visitElement(element: PsiElement) {
+                        TODO()
+                    }
+                }
+            }
+            file.accept(visitor)
+            for ((_, importStatement) in unusedImports) {
+                importStatement.delete()
+            }
+        }
+
     }
 }

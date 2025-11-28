@@ -8,14 +8,15 @@ import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
 
 @OptIn(ExperimentalUuidApi::class)
-class PsiWrapper private constructor(val element: PsiElement) {
+class PsiWrapper<out T : PsiElement> private constructor(val element: T) {
     companion object {
         val UUID_KEY = Key.create<Uuid>("UUID_KEY")
-        val WRAPPER_KEY = Key.create<WeakReference<PsiWrapper>>("WRAPPER_KEY")
-        fun of(element: PsiElement): PsiWrapper {
+        val WRAPPER_KEY = Key.create<WeakReference<PsiWrapper<*>>>("WRAPPER_KEY")
+        fun <T : PsiElement> of(element: T): PsiWrapper<T> {
             val wrapper = element.getUserData(WRAPPER_KEY)?.get()
             if (wrapper != null) {
-                return wrapper
+                @Suppress("UNCHECKED_CAST")
+                return wrapper as PsiWrapper<T>
             }
             val createNewWrapper = PsiWrapper(element)
             element.putUserData(WRAPPER_KEY, WeakReference(createNewWrapper))
@@ -37,10 +38,10 @@ class PsiWrapper private constructor(val element: PsiElement) {
     }
 
     override fun equals(other: Any?): Boolean {
-        if (other !is PsiWrapper && other !is PsiElement) {
+        if (other !is PsiWrapper<*> && other !is PsiElement) {
             return false
         }
-        if (other is PsiWrapper) {
+        if (other is PsiWrapper<*>) {
             val myUuid = uuid
             val otherUuid = other.uuid
             if (myUuid != null || otherUuid != null) {
