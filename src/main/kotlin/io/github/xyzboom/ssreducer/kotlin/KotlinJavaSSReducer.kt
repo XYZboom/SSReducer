@@ -9,6 +9,7 @@ import com.intellij.psi.PsiFile
 import io.github.xyzboom.ssreducer.IReducer
 import io.github.xyzboom.ssreducer.KaSessionRunner
 import io.github.xyzboom.ssreducer.algorithm.DDMin
+import io.github.xyzboom.ssreducer.createUniqueDirectory
 import io.github.xyzboom.ssreducer.workingDir
 import org.jetbrains.kotlin.analysis.api.KaExperimentalApi
 import org.jetbrains.kotlin.analysis.api.projectStructure.KaSourceModule
@@ -35,6 +36,17 @@ class KotlinJavaSSReducer : CliktCommand(), IReducer {
                     "Predict script must inside current working directory: $workingDir"
                 }
             }
+    }
+
+    private val resultDir by run<OptionDelegate<String?>> {
+        option("-o", "--out").validate { path ->
+            val file = File(path)
+            if (file.exists()) {
+                require(file.isDirectory) {
+                    "The output must be a directory"
+                }
+            }
+        }
     }
 
     private val jvmTarget by run<OptionWithValues<JvmTarget, JvmTarget, JvmTarget>> {
@@ -115,6 +127,19 @@ class KotlinJavaSSReducer : CliktCommand(), IReducer {
         return predictResult == 0
     }
 
+    private fun saveResult(fileContents: Map<String, String>) {
+        val resultDir = if (resultDir != null) {
+            File(resultDir!!)
+        } else {
+            createUniqueDirectory(File("ssreducer"))
+        }
+        for ((path, content) in fileContents) {
+            val file = File(resultDir, path.removePrefix(workingDir).removePrefix("/"))
+            file.parentFile.mkdirs()
+            file.writeText(content)
+        }
+    }
+
     @OptIn(KaExperimentalApi::class)
     override fun run() {
         val runner = KaSessionRunner(
@@ -155,7 +180,9 @@ class KotlinJavaSSReducer : CliktCommand(), IReducer {
                 ddmin.execute(currentElements)
                 currentLevel++
             }
-            println()
+            saveResult(currentGroup.fileContents())
+
+            println("predict times: $predictTimes")
         }
     }
 
