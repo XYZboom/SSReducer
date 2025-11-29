@@ -214,7 +214,7 @@ class GroupElements(
             if (!clazz.shouldBeDeleted()) {
                 val ref = javaParserFacade.createClassReferenceElement(clazz)
                 // the element "Object" in "(Object) null"
-                val ref2Obj = PsiTreeUtil.getChildOfType(valueExpr, PsiJavaCodeReferenceElement::class.java)
+                val ref2Obj = PsiTreeUtil.findChildOfType(valueExpr, PsiJavaCodeReferenceElement::class.java)
                 ref2Obj!!.replace(ref)
                 javaCodeStyleManager.addImport(containingFile, clazz)
             }
@@ -256,12 +256,16 @@ class GroupElements(
         val placeholderArgsText = Array(parameters.size) { "null" }.joinToString(", ")
         val placeholderText = "new Object($placeholderArgsText)"
         val placeholder = javaParserFacade.createExpressionFromText(placeholderText, context)
-        val ref2Obj = PsiTreeUtil.getChildOfType(placeholder, PsiReferenceExpression::class.java)
-        val placeholderArgs = PsiTreeUtil.getChildOfType(placeholder, PsiParameterList::class.java)!!
-        for ((i, placeholderArg) in placeholderArgs.parameters.withIndex()) {
-            placeholderArg.replace(createTypeDefaultValueElement(containingFile, parameters[i].type, context))
+        val ref2Obj = PsiTreeUtil.findChildOfType(placeholder, PsiJavaCodeReferenceElement::class.java)
+        if (parameters.isNotEmpty()) {
+            val placeholderArgs = PsiTreeUtil.getChildOfType(placeholder, PsiExpressionList::class.java)!!
+            for ((i, placeholderArg) in placeholderArgs.expressions.withIndex()) {
+                placeholderArg.replace(createTypeDefaultValueElement(containingFile, parameters[i].type, context))
+            }
         }
-        val ref2Class = createDefaultValueExprForClass(containingFile, element.containingClass, context)
+        // we find this PsiMethod (actually a constructor) from a class,
+        // so we ensure that element.containingClass is not null
+        val ref2Class = javaParserFacade.createClassReferenceElement(element.containingClass!!)
         ref2Obj!!.replace(ref2Class)
         return placeholder
     }
