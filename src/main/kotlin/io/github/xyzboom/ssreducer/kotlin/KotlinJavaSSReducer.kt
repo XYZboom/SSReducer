@@ -32,7 +32,7 @@ class KotlinJavaSSReducer : CliktCommand(), IReducer {
             .file()
             .required()
             .validate { file ->
-                require(file.canonicalPath.startsWith(workingDir)) {
+                require(file.absolutePath.startsWith(workingDir)) {
                     "Predict script must inside current working directory: $workingDir"
                 }
             }
@@ -79,7 +79,7 @@ class KotlinJavaSSReducer : CliktCommand(), IReducer {
             .multiple(default = emptyList())
             .validate { files ->
                 require(files.all { file ->
-                    file.canonicalPath.startsWith(workingDir)
+                    file.absolutePath.startsWith(workingDir)
                 }) {
                     "Source roots must inside current working directory: $workingDir"
                 }
@@ -106,14 +106,14 @@ class KotlinJavaSSReducer : CliktCommand(), IReducer {
             file.parentFile.mkdirs()
             file.writeText(content)
         }
-        val scriptRelativePath = predictScript.canonicalPath.removePrefix(workingDir).removePrefix("/")
+        val scriptRelativePath = predictScript.absolutePath.removePrefix(workingDir).removePrefix("/")
         val tempScript = tempDir.resolve(scriptRelativePath).toFile()
         tempScript.deleteOnExit()
         predictScript.copyTo(tempScript)
         tempScript.setExecutable(true)
         tempScript.setReadable(true)
         val process = Runtime.getRuntime().exec(
-            tempScript.canonicalPath, System.getenv().map { "${it.key}=${it.value}" }.toTypedArray(),
+            tempScript.absolutePath, System.getenv().map { "${it.key}=${it.value}" }.toTypedArray(),
             tempDir.toFile()
         )
         process.inputStream.bufferedReader().forEachLine {
@@ -134,7 +134,7 @@ class KotlinJavaSSReducer : CliktCommand(), IReducer {
             createUniqueDirectory(File("ssreducer"))
         }
         for ((path, content) in fileContents) {
-            val file = File(resultDir, path.removePrefix(workingDir).removePrefix("/"))
+            val file = File(resultDir, File(path).name)
             file.parentFile.mkdirs()
             file.writeText(content)
         }
