@@ -51,9 +51,20 @@ dependencies {
         "com.jetbrains.intellij.platform:lang",
         "com.jetbrains.intellij.platform:lang-impl",
         "com.jetbrains.intellij.platform:ide-core",
+        "com.jetbrains.intellij.platform:ide-core-impl",
         "com.jetbrains.intellij.java:java-frontback-impl",
         "com.jetbrains.intellij.platform:project-model-impl",
         "com.jetbrains.intellij.platform:configuration-store-impl",
+        "com.jetbrains.intellij.jsp:jsp",
+        "com.jetbrains.intellij.jsp:jsp-base",
+        "com.jetbrains.intellij.jsp:jsp-spi",
+        "com.jetbrains.intellij.xml:xml",
+        "com.jetbrains.intellij.xml:xml-psi",
+        "com.jetbrains.intellij.platform:analysis",
+        "com.jetbrains.intellij.platform:analysis-impl",
+        "com.jetbrains.intellij.java:java-analysis",
+        "com.jetbrains.intellij.java:java-analysis-impl",
+        "com.jetbrains.intellij.platform:object-serializer",
     ).forEach {
         implementation("$it:$aaIntellijVersion") { isTransitive = false }
     }

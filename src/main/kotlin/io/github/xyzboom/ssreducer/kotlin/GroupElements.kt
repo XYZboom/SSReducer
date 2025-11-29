@@ -3,6 +3,7 @@ package io.github.xyzboom.ssreducer.kotlin
 import com.intellij.lang.jvm.types.JvmType
 import com.intellij.openapi.project.Project
 import com.intellij.psi.*
+import com.intellij.psi.codeStyle.JavaCodeStyleManager
 import com.intellij.psi.util.PsiTreeUtil
 import org.jetbrains.kotlin.psi.KtVisitorVoid
 import kotlin.math.max
@@ -15,6 +16,7 @@ class GroupElements(
     val maxLevel: Int,
 ) {
     private val javaParserFacade: PsiElementFactory = project.getService(PsiElementFactory::class.java)
+    private val javaCodeStyleManager: JavaCodeStyleManager = project.getService(JavaCodeStyleManager::class.java)
 
     companion object {
 
@@ -156,51 +158,82 @@ class GroupElements(
         }
     }
 
-    val JvmType.defaultValue: String
-        get() = if (this is PsiType) {
-            defaultValue
-        } else {
-            "(Void) null"
-        }
-
-    val PsiType.defaultValue: String
-        get() = if (this is PsiClassType) {
-            val clazz = resolve()
-            if (clazz != null) {
-                if (clazz.shouldBeDeleted()) {
-                    "(Object) null"
+    fun createTypeDefaultValueElement(containingFile: PsiJavaFile, type: JvmType, context: PsiElement?): PsiExpression {
+        return when (type) {
+            is PsiClassType -> {
+                val clazz = type.resolve()
+                val valueExpr = javaParserFacade.createExpressionFromText("(Object) null", context)
+                if (clazz != null) {
+                    if (!clazz.shouldBeDeleted()) {
+                        val ref = javaParserFacade.createReferenceElementByType(type)
+                        // the element "Object" in "(Object) null"
+                        val ref2Obj = PsiTreeUtil.findChildOfType(valueExpr, PsiJavaCodeReferenceElement::class.java)
+                        ref2Obj!!.replace(ref)
+                        javaCodeStyleManager.addImport(containingFile, clazz)
+                    }
                 } else {
-                    "(${clazz.qualifiedName!!}) null"
+                    val ref = javaParserFacade.createReferenceElementByType(type)
+                    val ref2Obj = PsiTreeUtil.findChildOfType(valueExpr, PsiJavaCodeReferenceElement::class.java)
+                    ref2Obj!!.replace(ref)
                 }
-            } else "(${canonicalText}) null"
-        } else if (this is PsiPrimitiveType) when {
-            this === PsiTypes.byteType() -> "java.lang.Byte.parseByte(\"1\")"
-            this === PsiTypes.charType() -> "'1'"
-            this === PsiTypes.doubleType() -> "1.0"
-            this === PsiTypes.floatType() -> "1.0f"
-            this === PsiTypes.intType() -> "1"
-            this === PsiTypes.longType() -> "1L"
-            this === PsiTypes.shortType() -> "java.lang.Short.parseShort(\"1\")"
-            this === PsiTypes.booleanType() -> "true"
-            this === PsiTypes.voidType() || this === PsiTypes.nullType() -> "null"
-            else -> throw NoWhenBranchMatchedException()
+                valueExpr
+            }
+
+            is PsiPrimitiveType -> {
+                val text = when {
+                    type === PsiTypes.byteType() -> "Byte.parseByte(\"1\")"
+                    type === PsiTypes.charType() -> "'1'"
+                    type === PsiTypes.doubleType() -> "1.0"
+                    type === PsiTypes.floatType() -> "1.0f"
+                    type === PsiTypes.intType() -> "1"
+                    type === PsiTypes.longType() -> "1L"
+                    type === PsiTypes.shortType() -> "Short.parseShort(\"1\")"
+                    type === PsiTypes.booleanType() -> "true"
+                    type === PsiTypes.voidType() || type === PsiTypes.nullType() -> "null"
+                    else -> throw NoWhenBranchMatchedException()
+                }
+                javaParserFacade.createExpressionFromText(text, context)
+            }
+
+            is PsiType -> {
+                // todo handle other cases
+                javaParserFacade.createExpressionFromText("(${type.canonicalText}) null", context)
+            }
+
+            else -> {
+                javaParserFacade.createExpressionFromText("(Void) null", context)
+            }
         }
-        else "(${canonicalText}) null"
+    }
 
+    fun createDefaultValueExprForClass(
+        containingFile: PsiJavaFile, clazz: PsiClass?, context: PsiElement?
+    ): PsiExpression {
+        val valueExpr = javaParserFacade.createExpressionFromText("(Object) null", context)
+        if (clazz != null) {
+            if (!clazz.shouldBeDeleted()) {
+                val ref = javaParserFacade.createClassReferenceElement(clazz)
+                // the element "Object" in "(Object) null"
+                val ref2Obj = PsiTreeUtil.getChildOfType(valueExpr, PsiJavaCodeReferenceElement::class.java)
+                ref2Obj!!.replace(ref)
+                javaCodeStyleManager.addImport(containingFile, clazz)
+            }
+        }
 
-    fun getDefaultValueTextForMethod(method: PsiMethod): String {
+        return valueExpr
+    }
+
+    fun createDefaultValueExprForMethod(
+        containingFile: PsiJavaFile, method: PsiMethod, context: PsiElement?
+    ): PsiExpression {
         val returnType = method.returnType
         if (returnType != null) {
-            return returnType.defaultValue
+            return createTypeDefaultValueElement(
+                containingFile, returnType, context
+            )
         } else {
             val clazz = method.containingClass
-            val defaultClassName = if (clazz != null) {
-                if (!clazz.shouldBeDeleted()) {
-                    clazz.qualifiedName ?: "Object"
-                } else "Object"
-            } else "Object"
-
-            return "(${defaultClassName}) null"
+            return createDefaultValueExprForClass(containingFile, clazz, context)
         }
     }
 
@@ -218,24 +251,27 @@ class GroupElements(
         }
     }
 
-    fun createCallForConstructor(element: PsiMethod, context: PsiElement?): PsiElement {
+    fun createCallForConstructor(containingFile: PsiJavaFile, element: PsiMethod, context: PsiElement?): PsiElement {
         val parameters = element.parameters
-        val parameterDefaultValues = mutableListOf<String>()
-        for (parameter in parameters) {
-            parameterDefaultValues.add(parameter.type.defaultValue)
+        val placeholderArgsText = Array(parameters.size) { "null" }.joinToString(", ")
+        val placeholderText = "new Object($placeholderArgsText)"
+        val placeholder = javaParserFacade.createExpressionFromText(placeholderText, context)
+        val ref2Obj = PsiTreeUtil.getChildOfType(placeholder, PsiReferenceExpression::class.java)
+        val placeholderArgs = PsiTreeUtil.getChildOfType(placeholder, PsiParameterList::class.java)!!
+        for ((i, placeholderArg) in placeholderArgs.parameters.withIndex()) {
+            placeholderArg.replace(createTypeDefaultValueElement(containingFile, parameters[i].type, context))
         }
-        val typeText = element.containingClass?.qualifiedName ?: "Object"
-        return javaParserFacade.createExpressionFromText(
-            "new ${typeText}(${parameterDefaultValues.joinToString(", ")})", context
-        )
+        val ref2Class = createDefaultValueExprForClass(containingFile, element.containingClass, context)
+        ref2Obj!!.replace(ref2Class)
+        return placeholder
     }
 
     private fun editElementRef2Method(element: PsiElement, target: PsiMethod) {
         when {
             element.parent is PsiCallExpression -> {
                 element.parent.replaceOrDeleteParentStatement {
-                    javaParserFacade.createExpressionFromText(
-                        getDefaultValueTextForMethod(target), element.parent.context
+                    createDefaultValueExprForMethod(
+                        element.containingFile as PsiJavaFile, target, element.parent.context
                     )
                 }
             }
@@ -258,7 +294,9 @@ class GroupElements(
                     }
                     if (accessibleConstructor != null) {
                         element.replaceOrDeleteParentStatement {
-                            createCallForConstructor(accessibleConstructor, element.context)
+                            createCallForConstructor(
+                                element.containingFile as PsiJavaFile, accessibleConstructor, element.context
+                            )
                         }
                     } else if (clazz?.constructors?.all { it.shouldBeDeleted() } == true) {
                         // this means we can call default constructor
@@ -272,23 +310,23 @@ class GroupElements(
                             }
                         } else {
                             element.replaceOrDeleteParentStatement {
-                                javaParserFacade.createExpressionFromText(
-                                    getDefaultValueTextForMethod(target),
-                                    element.context
+                                createDefaultValueExprForMethod(
+                                    element.containingFile as PsiJavaFile, target, element.context
                                 )
                             }
                         }
                     } else {
                         element.replaceOrDeleteParentStatement {
-                            javaParserFacade.createExpressionFromText(
-                                getDefaultValueTextForMethod(target),
-                                element.context
+                            createDefaultValueExprForMethod(
+                                element.containingFile as PsiJavaFile, target, element.context
                             )
                         }
                     }
                 } else {
                     element.replaceOrDeleteParentStatement {
-                        javaParserFacade.createExpressionFromText(getDefaultValueTextForMethod(target), element.context)
+                        createDefaultValueExprForMethod(
+                            element.containingFile as PsiJavaFile, target, element.context
+                        )
                     }
                 }
             }
@@ -306,15 +344,15 @@ class GroupElements(
                     // the assignment expression is unfinished.
                     // for example: `A a = ;`
                     parent.replaceOrDeleteParentStatement {
-                        javaParserFacade.createExpressionFromText(
-                            target.type.defaultValue, parent.context
+                        createTypeDefaultValueElement(
+                            element.containingFile as PsiJavaFile, target.type, parent.context
                         )
                     }
                 }
             } else {
                 element.replaceOrDeleteParentStatement {
-                    javaParserFacade.createExpressionFromText(
-                        target.type.defaultValue, element.context
+                    createTypeDefaultValueElement(
+                        element.containingFile as PsiJavaFile, target.type, element.context
                     )
                 }
             }
@@ -322,8 +360,8 @@ class GroupElements(
             editElementRef2Variable(parent, target)
         } else {
             element.replaceOrDeleteParentStatement {
-                javaParserFacade.createExpressionFromText(
-                    target.type.defaultValue, element.context
+                createTypeDefaultValueElement(
+                    element.containingFile as PsiJavaFile, target.type, element.context
                 )
             }
         }
@@ -481,47 +519,11 @@ class GroupElements(
             }
         }
 
-        removeUnusedImport(files)
-    }
-
-    private fun removeUnusedImport(files: List<PsiFile>) {
         for (file in files) {
-            // key: the imported element
-            // value: the import statement
-            val unusedImports = mutableMapOf<PsiWrapper<*>, PsiImportStatement>()
-            val importLists = PsiTreeUtil.findChildrenOfType(file, PsiImportStatement::class.java)
-            for (importList in importLists) {
-                val imported = importList.resolve() ?: continue
-                unusedImports[PsiWrapper.of(imported)] = importList
-            }
-
-            val visitor = if (file is PsiJavaFile) {
-                object : JavaRecursiveElementVisitor() {
-                    override fun visitElement(element: PsiElement) {
-                        if (element is PsiImportList) {
-                            return
-                        }
-
-                        val targets = element.references.mapNotNull { it.resolve() ?: return@mapNotNull null }
-                        for (target in targets) {
-                            unusedImports.remove(PsiWrapper.of(target))
-                        }
-
-                        super.visitElement(element)
-                    }
-                }
-            } else {
-                object : KtVisitorVoid() {
-                    override fun visitElement(element: PsiElement) {
-                        TODO()
-                    }
-                }
-            }
-            file.accept(visitor)
-            for ((_, importStatement) in unusedImports) {
-                importStatement.delete()
+            if (file is PsiJavaFile) {
+                javaCodeStyleManager.shortenClassReferences(file)
+                javaCodeStyleManager.optimizeImports(file)
             }
         }
-
     }
 }

@@ -19,6 +19,9 @@
 
 package io.github.xyzboom.ssreducer
 
+import com.intellij.application.options.codeStyle.cache.CodeStyleCachingService
+import com.intellij.application.options.codeStyle.cache.CodeStyleCachingServiceImpl
+import com.intellij.codeInsight.ImportFilter
 import com.intellij.core.CoreApplicationEnvironment
 import com.intellij.formatting.ExcludedFileFormattingRestriction
 import com.intellij.formatting.Formatter
@@ -29,6 +32,7 @@ import com.intellij.lang.LanguageFormattingRestriction
 import com.intellij.mock.MockProject
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.CoroutineSupport
 import com.intellij.openapi.application.runWriteAction
 import com.intellij.openapi.options.SchemeManagerFactory
 import com.intellij.openapi.util.Disposer
@@ -38,9 +42,11 @@ import com.intellij.pom.tree.TreeAspect
 import com.intellij.psi.PsiTreeChangeAdapter
 import com.intellij.psi.PsiTreeChangeListener
 import com.intellij.psi.codeStyle.*
+import com.intellij.psi.codeStyle.modifier.CodeStyleSettingsModifier
 import com.intellij.psi.impl.source.codeStyle.CodeStyleManagerImpl
 import com.intellij.psi.impl.source.codeStyle.IndentHelper
 import com.intellij.psi.impl.source.codeStyle.IndentHelperImpl
+import com.intellij.psi.impl.source.codeStyle.JavaCodeStyleManagerImpl
 import com.intellij.psi.impl.source.codeStyle.PersistableCodeStyleSchemes
 import com.intellij.psi.impl.source.codeStyle.PostFormatProcessor
 import com.intellij.psi.impl.source.tree.JavaTreeCopyHandler
@@ -48,8 +54,10 @@ import com.intellij.psi.impl.source.tree.TreeCopyHandler
 import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.util.concurrency.annotations.RequiresReadLock
 import com.intellij.util.ui.EDT
-import io.github.xyzboom.ssreducer.kotlin.MockCodeStyle
+import io.github.xyzboom.ssreducer.kotlin.MockJavaCodeSettingsProvider
 import io.github.xyzboom.ssreducer.kotlin.MockSchemeManagerFactory
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import org.jetbrains.kotlin.analysis.api.KaExperimentalApi
 import org.jetbrains.kotlin.analysis.api.KaIdeApi
 import org.jetbrains.kotlin.analysis.api.KaImplementationDetail
@@ -102,6 +110,17 @@ import org.jetbrains.kotlin.platform.jvm.JvmPlatforms
 import org.jetbrains.kotlin.psi.KtFile
 import java.io.File
 import java.nio.file.Path
+import com.intellij.openapi.application.impl.PlatformCoroutineSupport
+import com.intellij.openapi.roots.ProjectFileIndex
+import com.intellij.openapi.roots.impl.DirectoryIndex
+import com.intellij.openapi.roots.impl.DirectoryIndexImpl
+import com.intellij.openapi.roots.impl.ProjectFileIndexImpl
+import com.intellij.psi.impl.JavaPsiImplementationHelper
+import com.intellij.workspaceModel.core.fileIndex.WorkspaceFileIndex
+import com.intellij.workspaceModel.core.fileIndex.WorkspaceFileIndexContributor
+import com.intellij.workspaceModel.core.fileIndex.impl.WorkspaceFileIndexImpl
+import io.github.xyzboom.ssreducer.kotlin.MockJavaPsiImplementationHelper
+import kotlin.jvm.java
 
 @Suppress("UnstableApiUsage")
 class KaSessionRunner(
@@ -235,6 +254,23 @@ class KaSessionRunner(
         CoreApplicationEnvironment.registerExtensionPoint(
             project.extensionArea, PsiTreeChangeListener.EP.name, PsiTreeChangeAdapter::class.java
         )
+        registerExtraForEditPSI(kotlinCoreProjectEnvironment, project)
+        return Triple(
+            StandaloneAnalysisAPISession(kotlinCoreProjectEnvironment) {
+                // This is only used by kapt4, which should query a provider, instead of have it passed here IMHO.
+                // kapt4's implementation is static, which may or may not work for us depending on future use cases.
+                // Let's implement it later if necessary.
+                TODO("Not implemented yet.")
+            },
+            kotlinCoreProjectEnvironment,
+            modules
+        )
+    }
+
+    private fun registerExtraForEditPSI(
+        kotlinCoreProjectEnvironment: KotlinCoreProjectEnvironment,
+        project: MockProject
+    ) {
         // this area is different from project.extensionArea
         val extensionArea = kotlinCoreProjectEnvironment.environment.application.extensionArea
         CoreApplicationEnvironment.registerExtensionPoint(
@@ -253,13 +289,20 @@ class KaSessionRunner(
             CodeStyleSettingsServiceImpl::class.java
         )
         CoreApplicationEnvironment.registerExtensionPoint(
-            extensionArea, CodeStyleSettingsProvider.EXTENSION_POINT_NAME, MockCodeStyle::class.java
+            extensionArea, CodeStyleSettingsProvider.EXTENSION_POINT_NAME, CodeStyleSettingsProvider::class.java
         )
+        val javaCodeStyleProvider = MockJavaCodeSettingsProvider()
+        extensionArea.getExtensionPoint(CodeStyleSettingsProvider.EXTENSION_POINT_NAME)
+            .registerExtension(javaCodeStyleProvider, kotlinCoreProjectEnvironment.parentDisposable)
         CoreApplicationEnvironment.registerExtensionPoint(
-            extensionArea, LanguageCodeStyleSettingsProvider.EP_NAME, MockCodeStyle::class.java
+            extensionArea, LanguageCodeStyleSettingsProvider.EP_NAME, LanguageCodeStyleSettingsProvider::class.java
         )
+        extensionArea.getExtensionPoint(LanguageCodeStyleSettingsProvider.EP_NAME)
+            .registerExtension(javaCodeStyleProvider, kotlinCoreProjectEnvironment.parentDisposable)
         CoreApplicationEnvironment.registerExtensionPoint(
-            extensionArea, LanguageCodeStyleSettingsContributor.EP_NAME, LanguageCodeStyleSettingsContributor::class.java
+            extensionArea,
+            LanguageCodeStyleSettingsContributor.EP_NAME,
+            LanguageCodeStyleSettingsContributor::class.java
         )
         CoreApplicationEnvironment.registerExtensionPoint(
             extensionArea, FileIndentOptionsProvider.EP_NAME, DetectableIndentOptionsProvider::class.java
@@ -317,15 +360,57 @@ class KaSessionRunner(
         CoreApplicationEnvironment.registerExtensionPoint(
             extensionArea, PostFormatProcessor.EP_NAME, PostFormatProcessor::class.java
         )
-        return Triple(
-            StandaloneAnalysisAPISession(kotlinCoreProjectEnvironment) {
-                // This is only used by kapt4, which should query a provider, instead of have it passed here IMHO.
-                // kapt4's implementation is static, which may or may not work for us depending on future use cases.
-                // Let's implement it later if necessary.
-                TODO("Not implemented yet.")
-            },
-            kotlinCoreProjectEnvironment,
-            modules
+        project.registerService(
+            JavaCodeStyleManager::class.java,
+            JavaCodeStyleManagerImpl::class.java
+        )
+        project.registerService(
+            CodeStyleCachingService::class.java,
+            CodeStyleCachingServiceImpl::class.java
+        )
+        CoreApplicationEnvironment.registerExtensionPoint(
+            extensionArea, FileCodeStyleProvider.EP_NAME, FileCodeStyleProvider::class.java
+        )
+        CoreApplicationEnvironment.registerExtensionPoint(
+            extensionArea, CodeStyleSettingsModifier.EP_NAME, CodeStyleSettingsModifier::class.java
+        )
+        @Suppress("UNCHECKED_CAST")
+        val styleClass =
+            Class.forName("com.intellij.application.options.codeStyle.cache.CodeStyleCachedValueProviderService")
+                    as Class<Any>
+        val constructor = styleClass.getDeclaredConstructor(CoroutineScope::class.java).apply {
+            isAccessible = true
+        }
+        project.registerService(
+            styleClass,
+            constructor.newInstance(CoroutineScope(Dispatchers.Unconfined)),
+            kotlinCoreProjectEnvironment.parentDisposable
+        )
+        kotlinCoreProjectEnvironment.registerApplicationServices(
+            CoroutineSupport::class.java,
+            PlatformCoroutineSupport::class.java
+        )
+        CoreApplicationEnvironment.registerExtensionPoint(
+            extensionArea, ImportFilter.EP_NAME, ImportFilter::class.java
+        )
+        project.registerService(
+            JavaPsiImplementationHelper::class.java,
+            MockJavaPsiImplementationHelper::class.java
+        )
+        project.registerService(
+            ProjectFileIndex::class.java,
+            ProjectFileIndexImpl::class.java
+        )
+        project.registerService(
+            WorkspaceFileIndex::class.java,
+            WorkspaceFileIndexImpl::class.java
+        )
+        CoreApplicationEnvironment.registerExtensionPoint(
+            extensionArea, WorkspaceFileIndexImpl.EP_NAME, WorkspaceFileIndexContributor::class.java
+        )
+        project.registerService(
+            DirectoryIndex::class.java,
+            DirectoryIndexImpl::class.java
         )
     }
 
