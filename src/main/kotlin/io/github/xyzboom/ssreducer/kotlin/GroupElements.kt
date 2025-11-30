@@ -176,7 +176,11 @@ class GroupElements(
                     val ref2Obj = PsiTreeUtil.findChildOfType(valueExpr, PsiJavaCodeReferenceElement::class.java)
                     ref2Obj!!.replace(ref)
                 }
-                valueExpr
+                if (clazz is PsiTypeParameter) {
+                    PsiTreeUtil.getChildOfType(valueExpr, PsiLiteralExpression::class.java)!!
+                } else {
+                    valueExpr
+                }
             }
 
             is PsiPrimitiveType -> {
@@ -271,6 +275,25 @@ class GroupElements(
     }
 
     private fun editElementRef2Method(element: PsiElement, target: PsiMethod) {
+
+        fun doDefaultEdit() {
+            val expectedType = (element as? PsiExpression)?.type
+            if (expectedType != null) {
+                element.replaceOrDeleteParentStatement {
+                    createTypeDefaultValueElement(
+                        element.containingFile as PsiJavaFile,
+                        expectedType, element.context
+                    )
+                }
+            } else {
+                element.replaceOrDeleteParentStatement {
+                    createDefaultValueExprForMethod(
+                        element.containingFile as PsiJavaFile, target, element.context
+                    )
+                }
+            }
+        }
+
         when {
             element.parent is PsiCallExpression -> {
                 element.parent.replaceOrDeleteParentStatement {
@@ -313,25 +336,13 @@ class GroupElements(
                                 )
                             }
                         } else {
-                            element.replaceOrDeleteParentStatement {
-                                createDefaultValueExprForMethod(
-                                    element.containingFile as PsiJavaFile, target, element.context
-                                )
-                            }
+                            doDefaultEdit()
                         }
                     } else {
-                        element.replaceOrDeleteParentStatement {
-                            createDefaultValueExprForMethod(
-                                element.containingFile as PsiJavaFile, target, element.context
-                            )
-                        }
+                        doDefaultEdit()
                     }
                 } else {
-                    element.replaceOrDeleteParentStatement {
-                        createDefaultValueExprForMethod(
-                            element.containingFile as PsiJavaFile, target, element.context
-                        )
-                    }
+                    doDefaultEdit()
                 }
             }
         }
@@ -411,7 +422,7 @@ class GroupElements(
         val files = elements.keys.filter { it.element is PsiFile }.map { it.element } as List<PsiFile>
         // we must resolve reference first. Otherwise, the reference will lose after delete.
         val needEdit = mutableListOf<Pair<PsiElement, PsiElement>>()
-        val needDeleteElements = mutableSetOf<PsiElement>()
+        val needDeleteElements = mutableSetOf<PsiWrapper<PsiElement>>()
 
         for (file in files) {
             var shouldDeleteChildren = 0
@@ -420,7 +431,7 @@ class GroupElements(
                 if (!isDecl(element)) return false
                 if (element.shouldBeDeleted() || shouldDeleteChildren > 0) {
                     elements.remove(PsiWrapper.of(element))
-                    needDeleteElements.add(element)
+                    needDeleteElements.add(PsiWrapper.of(element))
                     return true
                 }
                 return false
@@ -457,7 +468,9 @@ class GroupElements(
                         for ((i, param) in method.parameters.withIndex()) {
                             val sourceParam = param.sourceElement
                             if (sourceParam.shouldBeDeleted()) {
-                                element.argumentList?.expressions[i]?.let { needDeleteElements.add(it) }
+                                element.argumentList?.expressions[i]?.let {
+                                    needDeleteElements.add(PsiWrapper.of(it))
+                                }
                             }
                         }
                     }
@@ -476,7 +489,7 @@ class GroupElements(
                 object : JavaRecursiveElementVisitor() {
                     override fun visitElement(element: PsiElement) {
                         if (!element.isValid) return
-                        if (element in needDeleteElements) {
+                        if (PsiWrapper.of(element) in needDeleteElements) {
                             // we may replace initializer with the whole variable
                             // For example: Foo foo = bar.getFoo();
                             // So we must visit the initializer
@@ -490,7 +503,7 @@ class GroupElements(
 
                     override fun visitAssignmentExpression(expression: PsiAssignmentExpression) {
                         if (!expression.isValid) return
-                        if (expression in needDeleteElements) return
+                        if (PsiWrapper.of(expression) in needDeleteElements) return
                         // we need to edit right first because sometimes
                         // we may replace the whole assignment with the right
                         expression.rExpression?.accept(this)
@@ -509,15 +522,21 @@ class GroupElements(
             file.accept(visitor)
         }
 
+        fun PsiElement.anyParentNeedDelete(): Boolean {
+            if (PsiWrapper.of(this) in needDeleteElements) return true
+            return parent?.anyParentNeedDelete() == true
+        }
+
         for ((element, target) in needEdit) {
             if (!element.isValid) continue
+            if (element.anyParentNeedDelete()) continue
             editElement(element, target)
         }
 
-        for (element in needDeleteElements) {
-            if (!element.isValid) continue
+        for (wrapper in needDeleteElements) {
+            if (!wrapper.element.isValid) continue
             try {
-                deleteElement(element)
+                deleteElement(wrapper.element)
             } catch (e: Exception) {
                 e
             }
