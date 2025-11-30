@@ -2,6 +2,7 @@ package io.github.xyzboom.ssreducer.kotlin
 
 import com.intellij.lang.jvm.types.JvmType
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.Key
 import com.intellij.psi.*
 import com.intellij.psi.codeStyle.JavaCodeStyleManager
 import com.intellij.psi.util.PsiTreeUtil
@@ -19,6 +20,8 @@ class GroupElements(
     private val javaCodeStyleManager: JavaCodeStyleManager = project.getService(JavaCodeStyleManager::class.java)
 
     companion object {
+
+        private val TYPE_DEFAULT_VALUE_KEY = Key.create<PsiExpression>("TYPE_DEFAULT_VALUE_KEY")
 
         fun isDecl(element: PsiElement): Boolean {
             return when (element) {
@@ -158,7 +161,7 @@ class GroupElements(
         }
     }
 
-    fun createTypeDefaultValueElement(containingFile: PsiJavaFile, type: JvmType, context: PsiElement?): PsiExpression {
+    fun createTypeDefaultValueElement(containingFile: PsiJavaFile, type: JvmType?, context: PsiElement?): PsiExpression {
         return when (type) {
             is PsiClassType -> {
                 val clazz = type.resolve()
@@ -205,7 +208,7 @@ class GroupElements(
             }
 
             else -> {
-                javaParserFacade.createExpressionFromText("(Void) null", context)
+                javaParserFacade.createExpressionFromText("null", context)
             }
         }
     }
@@ -277,13 +280,10 @@ class GroupElements(
     private fun editElementRef2Method(element: PsiElement, target: PsiMethod) {
 
         fun doDefaultEdit() {
-            val expectedType = (element as? PsiExpression)?.type
-            if (expectedType != null) {
+            val expectedTypeDefaultValue = element.getUserData(TYPE_DEFAULT_VALUE_KEY)
+            if (expectedTypeDefaultValue != null) {
                 element.replaceOrDeleteParentStatement {
-                    createTypeDefaultValueElement(
-                        element.containingFile as PsiJavaFile,
-                        expectedType, element.context
-                    )
+                    expectedTypeDefaultValue
                 }
             } else {
                 element.replaceOrDeleteParentStatement {
@@ -392,23 +392,36 @@ class GroupElements(
     }
 
     fun deleteElement(element: PsiElement) {
-        if (element !is PsiLocalVariable) {
-            element.delete()
+        if (element is PsiLocalVariable) {
+            val initializer = element.initializer
+            if (initializer == null) {
+                element.delete()
+                return
+            }
+            if (initializer.canBeStatement()) {
+                val statement = javaParserFacade.createStatementFromText("new Object();", element.context)
+                        as PsiExpressionStatement
+                statement.expression.replace(initializer)
+                element.replace(statement)
+            } else {
+                element.delete()
+            }
             return
         }
-        val initializer = element.initializer
-        if (initializer == null) {
-            element.delete()
+        if (element is PsiReturnStatement) {
+            val returnExpr = element.returnValue
+            if (returnExpr == null) {
+                element.delete()
+                return
+            }
+            val defaultExpr = createTypeDefaultValueElement(
+                element.containingFile as PsiJavaFile,
+                returnExpr.type, element.context
+            )
+            returnExpr.replace(defaultExpr)
             return
         }
-        if (initializer.canBeStatement()) {
-            val statement = javaParserFacade.createStatementFromText("new Object();", element.context)
-                    as PsiExpressionStatement
-            statement.expression.replace(initializer)
-            element.replace(statement)
-        } else {
-            element.delete()
-        }
+        element.delete()
     }
 
     fun PsiElement?.shouldBeDeleted(shouldDelete: Set<PsiWrapper<*>> = emptySet()): Boolean {
@@ -479,6 +492,13 @@ class GroupElements(
                 val allTargets = if (callTarget != null) targets + callTarget else targets
                 for (target in allTargets) {
                     if (target.shouldBeDeleted()) {
+                        if (element is PsiExpression) {
+                            // record default value of current type. when editing elements, the type may be changed
+                            val defaultValue = createTypeDefaultValueElement(
+                                file as PsiJavaFile, element.type, null
+                            )
+                            element.putUserData(TYPE_DEFAULT_VALUE_KEY, defaultValue)
+                        }
                         needEdit.add(element to target)
                         break
                     }
