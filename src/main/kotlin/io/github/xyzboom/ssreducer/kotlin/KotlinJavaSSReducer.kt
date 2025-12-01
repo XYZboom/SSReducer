@@ -7,7 +7,6 @@ import com.github.ajalt.clikt.parameters.types.enum
 import com.github.ajalt.clikt.parameters.types.file
 import com.intellij.psi.PsiFile
 import io.github.xyzboom.ssreducer.IReducer
-import io.github.xyzboom.ssreducer.KaSessionRunner
 import io.github.xyzboom.ssreducer.algorithm.DDMin
 import io.github.xyzboom.ssreducer.createUniqueDirectory
 import io.github.xyzboom.ssreducer.workingDir

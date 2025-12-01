@@ -17,7 +17,7 @@
 
 @file:Suppress("INVISIBLE_REFERENCE", "INVISIBLE_MEMBER")
 
-package io.github.xyzboom.ssreducer
+package io.github.xyzboom.ssreducer.kotlin
 
 import com.intellij.application.options.codeStyle.cache.CodeStyleCachingService
 import com.intellij.application.options.codeStyle.cache.CodeStyleCachingServiceImpl
@@ -54,8 +54,6 @@ import com.intellij.psi.impl.source.tree.TreeCopyHandler
 import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.util.concurrency.annotations.RequiresReadLock
 import com.intellij.util.ui.EDT
-import io.github.xyzboom.ssreducer.kotlin.MockJavaCodeSettingsProvider
-import io.github.xyzboom.ssreducer.kotlin.MockSchemeManagerFactory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import org.jetbrains.kotlin.analysis.api.KaExperimentalApi
@@ -121,7 +119,6 @@ import com.intellij.psi.impl.source.tree.TreeGenerator
 import com.intellij.workspaceModel.core.fileIndex.WorkspaceFileIndex
 import com.intellij.workspaceModel.core.fileIndex.WorkspaceFileIndexContributor
 import com.intellij.workspaceModel.core.fileIndex.impl.WorkspaceFileIndexImpl
-import io.github.xyzboom.ssreducer.kotlin.MockJavaPsiImplementationHelper
 import kotlin.jvm.java
 
 @Suppress("UnstableApiUsage")
