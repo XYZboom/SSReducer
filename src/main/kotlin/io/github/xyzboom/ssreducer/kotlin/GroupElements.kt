@@ -29,6 +29,10 @@ class GroupElements(
                 is PsiNamedElement -> true
                 is PsiStatement -> true
                 is PsiComment -> true
+                is PsiCodeBlock -> element.parent !is PsiClassInitializer
+                        && element.parent !is PsiLoopStatement
+                        && element.parent.parent !is PsiForStatement
+
                 else -> false
             }
         }
@@ -401,6 +405,11 @@ class GroupElements(
         // todo other cases
     }
 
+    fun PsiElement.notPureDelete(): Boolean {
+        return this is PsiLocalVariable || this is PsiReturnStatement
+                || this is PsiIfStatement || this is PsiCodeBlock || this is PsiLoopStatement
+    }
+
     fun deleteElement(element: PsiElement) {
         if (element is PsiLocalVariable) {
             val initializer = element.initializer
@@ -431,6 +440,54 @@ class GroupElements(
             returnExpr.replace(defaultExpr)
             return
         }
+        if (element is PsiIfStatement) {
+            val thenStat = element.thenBranch
+            val elseStat = element.elseBranch
+            val pair = element.parentOfTypeAndDirectChild<PsiCodeBlock>()
+            if (pair == null) {
+                element.delete()
+                return
+            }
+            val (block, insertPos) = pair
+            if (elseStat != null) {
+                block.addAfter(elseStat, insertPos)
+            }
+            if (thenStat != null) {
+                block.addAfter(thenStat, insertPos)
+            }
+            element.delete()
+            return
+        }
+        if (element is PsiCodeBlock) {
+            val pair = element.parentOfTypeAndDirectChild<PsiCodeBlock>()
+            if (pair == null) {
+                element.delete()
+                return
+            }
+            val (parentBlock, insertPos) = pair
+            for (stat in element.statements) {
+                parentBlock.addBefore(stat, insertPos)
+            }
+            element.delete()
+            return
+        }
+        if (element is PsiLoopStatement) {
+            val pair = element.parentOfTypeAndDirectChild<PsiCodeBlock>()
+            if (pair == null) {
+                element.delete()
+                return
+            }
+            val (parentBlock, insertPos) = pair
+            val body = element.body
+            if (body != null) {
+                parentBlock.addAfter(body, insertPos)
+            }
+            if (element is PsiForStatement) {
+                element.initialization?.let { parentBlock.addAfter(it, insertPos) }
+            }
+            element.delete()
+            return
+        }
         element.delete()
     }
 
@@ -448,11 +505,12 @@ class GroupElements(
         val needDeleteElements = mutableSetOf<PsiWrapper<PsiElement>>()
 
         for (file in files) {
-            var shouldDeleteChildren = 0
+            val isPureStack = ArrayDeque<Boolean>()
+
             fun recordNeedDelete(element: PsiElement): Boolean {
                 if (!element.isValid) return false
                 if (!isCollectable(element)) return false
-                if (element.shouldBeDeleted() || shouldDeleteChildren > 0) {
+                if (element.shouldBeDeleted() || isPureStack.lastOrNull() == true) {
                     elements.remove(PsiWrapper.of(element))
                     needDeleteElements.add(PsiWrapper.of(element))
                     return true
@@ -464,18 +522,18 @@ class GroupElements(
                 object : JavaRecursiveElementVisitor() {
                     override fun visitElement(element: PsiElement) {
                         val needDelete = recordNeedDelete(element)
-                        if (needDelete) shouldDeleteChildren++
+                        if (needDelete) isPureStack.addFirst(!element.notPureDelete())
                         super.visitElement(element)
-                        if (needDelete) shouldDeleteChildren--
+                        if (needDelete) isPureStack.removeFirst()
                     }
                 }
             } else {
                 object : KtVisitorVoid() {
                     override fun visitElement(element: PsiElement) {
                         val needDelete = recordNeedDelete(element)
-                        if (needDelete) shouldDeleteChildren++
+                        if (needDelete) isPureStack.addFirst(!element.notPureDelete())
                         super.visitElement(element)
-                        if (needDelete) shouldDeleteChildren--
+                        if (needDelete) isPureStack.removeFirst()
                     }
                 }
             }
@@ -552,14 +610,51 @@ class GroupElements(
             file.accept(visitor)
         }
 
-        fun PsiElement.anyParentNeedDelete(): Boolean {
-            if (PsiWrapper.of(this) in needDeleteElements) return true
-            return parent?.anyParentNeedDelete() == true
+        /**
+         * We do not delete statement directly. We add child statement into current block.
+         * See [deleteElement] for more details.
+         * In these cases, if current statement is no need to delete,
+         * even if the parent statement need to be deleted, current statement still exists.
+         * For example:
+         * ```java
+         * Object a = null;
+         * {
+         *     foo(a);
+         * }
+         * ```
+         * We are going to delete:
+         * ```java
+         * Object a = null;
+         * ```
+         * and
+         * ```java
+         * {
+         *     foo(a);
+         * }
+         * ```
+         * The result will be:
+         * ```java
+         * foo((Object) null);
+         * ```
+         * Note that `a` in `foo(a)` need to be edited.
+         */
+        fun PsiElement.actuallyNeedEdit(): Boolean {
+            val wrapper = PsiWrapper.of(this)
+            val inNeedDelete = wrapper in needDeleteElements
+            if (inNeedDelete) {
+                if (!notPureDelete()) return true
+            }
+            if (isCollectable(this) && !inNeedDelete) return false
+            return parent?.actuallyNeedEdit() == true
         }
+//        fun PsiElement.anyParentNeedDelete(): Boolean {
+//            if (PsiWrapper.of(this) in needDeleteElements) return true
+//            return parent?.anyParentNeedDelete() == true
+//        }
 
         for ((element, target) in needEdit) {
             if (!element.isValid) continue
-            if (element.anyParentNeedDelete()) continue
+            if (element.actuallyNeedEdit()) continue
             editElement(element, target)
         }
 
