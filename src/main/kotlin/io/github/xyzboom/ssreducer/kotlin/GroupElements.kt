@@ -23,11 +23,12 @@ class GroupElements(
 
         private val TYPE_DEFAULT_VALUE_KEY = Key.create<PsiExpression>("TYPE_DEFAULT_VALUE_KEY")
 
-        fun isDecl(element: PsiElement): Boolean {
+        fun isCollectable(element: PsiElement): Boolean {
             return when (element) {
                 is PsiParameter -> element.parent !is PsiCatchSection
                 is PsiNamedElement -> true
                 is PsiStatement -> true
+                is PsiComment -> true
                 else -> false
             }
         }
@@ -38,15 +39,20 @@ class GroupElements(
             for (file in files) {
                 val stack = ArrayDeque<PsiElement>()
                 fun enterElement(element: PsiElement) {
-                    if (isDecl(element)) {
+                    if (isCollectable(element)) {
                         stack.addFirst(element)
-                        elements[PsiWrapper.of(element)] = stack.size
+                        elements[PsiWrapper.of(element)] =
+                            if (element is PsiComment) {
+                                1
+                            } else {
+                                stack.size
+                            }
                         maxLevel = max(maxLevel, stack.size)
                     }
                 }
 
                 fun exitElement(element: PsiElement) {
-                    if (isDecl(element)) {
+                    if (isCollectable(element)) {
                         require(stack.removeFirst() === element)
                     }
                 }
@@ -91,7 +97,7 @@ class GroupElements(
         val copiedElements = mutableMapOf<PsiWrapper<*>, Int>()
         for ((oriFile, copiedFile) in copiedFiles) {
             fun enterElement(element: PsiElement) {
-                if (!isDecl(element)) {
+                if (!isCollectable(element)) {
                     return
                 }
                 val oriElement = PsiTreeUtil.findSameElementInCopy(element, oriFile)
@@ -161,7 +167,11 @@ class GroupElements(
         }
     }
 
-    fun createTypeDefaultValueElement(containingFile: PsiJavaFile, type: JvmType?, context: PsiElement?): PsiExpression {
+    fun createTypeDefaultValueElement(
+        containingFile: PsiJavaFile,
+        type: JvmType?,
+        context: PsiElement?
+    ): PsiExpression {
         return when (type) {
             is PsiClassType -> {
                 val clazz = type.resolve()
@@ -441,7 +451,7 @@ class GroupElements(
             var shouldDeleteChildren = 0
             fun recordNeedDelete(element: PsiElement): Boolean {
                 if (!element.isValid) return false
-                if (!isDecl(element)) return false
+                if (!isCollectable(element)) return false
                 if (element.shouldBeDeleted() || shouldDeleteChildren > 0) {
                     elements.remove(PsiWrapper.of(element))
                     needDeleteElements.add(PsiWrapper.of(element))
