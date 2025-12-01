@@ -3,6 +3,7 @@ import org.jetbrains.kotlin.gradle.dsl.JvmDefaultMode
 plugins {
     kotlin("jvm") version "2.2.21"
     application
+    id("org.jetbrains.intellij.platform") version "2.3.0"
 }
 
 group = "io.github.xyzboom"
@@ -14,6 +15,9 @@ repositories {
     maven("https://redirector.kotlinlang.org/maven/bootstrap/")
     maven("https://redirector.kotlinlang.org/maven/kotlin-ide-plugin-dependencies")
     maven("https://packages.jetbrains.team/maven/p/ij/intellij-dependencies")
+    intellijPlatform {
+        defaultRepositories()
+    }
 }
 
 val aaKotlinBaseVersion: String by project
@@ -65,10 +69,34 @@ dependencies {
         "com.jetbrains.intellij.java:java-analysis",
         "com.jetbrains.intellij.java:java-analysis-impl",
         "com.jetbrains.intellij.platform:object-serializer",
+        // cpp
+//        "com.jetbrains.intellij.cidr:cidr-core",
+//        "com.jetbrains.intellij.cidr:cidr-psi-base",
+//        "com.jetbrains.intellij.cidr:cidr-lang-base",
+//        "com.jetbrains.intellij.cidr:cidr-project-model",
+//        "com.jetbrains.intellij.cidr:cidr-util",
     ).forEach {
         implementation("$it:$aaIntellijVersion") { isTransitive = false }
     }
-
+    intellijPlatform {
+        clion("2024.2.5")
+        bundledPlugins(
+            "com.intellij.cidr.lang",
+            "com.intellij.cidr.base",
+            "com.intellij.nativeDebug",
+        )
+        bundledModules(
+            "com.intellij.modules.cidr.lang",
+            "com.intellij.cidr.base",
+            "com.intellij.modules.cidr.debugger"
+        )
+    }
+//    implementation("cpp:CLion:2024.2.5")
+//    listOf(
+//        "bundledPlugin:com.intellij.clion"
+//    ).forEach {
+//        implementation("$it:CL-242.26775.1") { isTransitive = false }
+//    }
     listOf(
         "org.jetbrains.kotlin:analysis-api-k2-for-ide",
         "org.jetbrains.kotlin:analysis-api-for-ide",
@@ -120,6 +148,12 @@ dependencies {
     implementation("org.jetbrains:annotations:26.0.2")
     testImplementation(platform("org.junit:junit-bom:5.10.0"))
     testImplementation("org.junit.jupiter:junit-jupiter")
+}
+
+configurations {
+    runtimeClasspath {
+        extendsFrom(configurations["intellijPlatformClasspath"])
+    }
 }
 
 tasks.test {
