@@ -32,6 +32,8 @@ class GroupElements(
                 is PsiCodeBlock -> element.parent !is PsiClassInitializer
                         && element.parent !is PsiLoopStatement
                         && element.parent.parent !is PsiForStatement
+                        && element.parent !is PsiTryStatement
+                        && element.parent !is PsiCatchSection
 
                 else -> false
             }

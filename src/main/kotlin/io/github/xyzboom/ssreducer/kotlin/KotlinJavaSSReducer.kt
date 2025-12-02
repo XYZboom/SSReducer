@@ -96,8 +96,14 @@ class KotlinJavaSSReducer : CliktCommand(), IReducer {
     }
 
     private var predictTimes = 0
+    private val fileContentsCache = mutableMapOf<Map<String, String>, Boolean>()
 
-    private fun predict(fileContents: Map<String, String>): Boolean {
+    private fun predict(group: GroupElements): Boolean {
+        val fileContents = group.fileContents()
+        val fileContentsCacheResult = fileContentsCache[fileContents]
+        if (fileContentsCacheResult != null) {
+            return fileContentsCacheResult
+        }
         val tempDir: Path = Files.createTempDirectory("kjSSReducer")
         tempDir.toFile().deleteOnExit()
         for ((path, content) in fileContents) {
@@ -121,9 +127,11 @@ class KotlinJavaSSReducer : CliktCommand(), IReducer {
         process.errorStream.bufferedReader().forEachLine {
             System.err.println(it)
         }
-        val predictResult = process.waitFor()
+        val predictExit = process.waitFor()
         predictTimes++
-        return predictResult == 0
+        val predictResult = predictExit == 0
+        fileContentsCache[fileContents] = predictResult
+        return predictResult
     }
 
     private fun saveResult(fileContents: Map<String, String>) {
@@ -169,8 +177,7 @@ class KotlinJavaSSReducer : CliktCommand(), IReducer {
                 val ddmin = DDMin {
                     val group = currentGroup.copyOf(it.associateWith { currentLevel } + notCurrentElements)
                     group.reconstructDependencies()
-                    val fileContents = group.fileContents()
-                    val predictResult = predict(fileContents)
+                    val predictResult = predict(group)
                     if (predictResult) {
                         currentGroup = group.applyEdit()
                     }
