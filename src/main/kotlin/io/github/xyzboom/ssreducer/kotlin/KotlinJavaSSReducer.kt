@@ -96,13 +96,16 @@ class KotlinJavaSSReducer : CliktCommand(), IReducer {
     }
 
     private var predictTimes = 0
-    private val fileContentsCache = mutableMapOf<Map<String, String>, Boolean>()
+    // key: fileContents value: predict result --- cache hit times
+    private val fileContentsCache = mutableMapOf<Map<String, String>, Pair<Boolean, Int>>()
+    private val appearedResult = mutableSetOf<Map<String, String>>()
 
     private fun predict(group: GroupElements): Boolean {
         val fileContents = group.fileContents()
         val fileContentsCacheResult = fileContentsCache[fileContents]
         if (fileContentsCacheResult != null) {
-            return fileContentsCacheResult
+            fileContentsCache[fileContents] = fileContentsCacheResult.first to fileContentsCacheResult.second + 1
+            return fileContentsCacheResult.first
         }
         val tempDir: Path = Files.createTempDirectory("kjSSReducer")
         tempDir.toFile().deleteOnExit()
@@ -130,7 +133,7 @@ class KotlinJavaSSReducer : CliktCommand(), IReducer {
         val predictExit = process.waitFor()
         predictTimes++
         val predictResult = predictExit == 0
-        fileContentsCache[fileContents] = predictResult
+        fileContentsCache[fileContents] = predictResult to 0
         return predictResult
     }
 
@@ -166,29 +169,37 @@ class KotlinJavaSSReducer : CliktCommand(), IReducer {
             GroupElements.groupElements(project, psiRoots)
             val copiedRoots = psiRoots.map { it.copy() as PsiFile }
             var currentGroup = GroupElements.groupElements(project, copiedRoots)
-            var currentLevel = 1
-            while (currentLevel <= currentGroup.maxLevel) {
-                val currentElements = currentGroup.elements.filter { it.value == currentLevel }.keys.toList()
-                if (currentElements.isEmpty()) {
-                    currentLevel++
-                    continue
-                }
-                val notCurrentElements = currentGroup.elements.filter { it.value != currentLevel }
-                val ddmin = DDMin {
-                    val group = currentGroup.copyOf(it.associateWith { currentLevel } + notCurrentElements)
-                    group.reconstructDependencies()
-                    val predictResult = predict(group)
-                    if (predictResult) {
-                        currentGroup = group.applyEdit()
+            while (true) {
+                var currentLevel = 1
+                while (currentLevel <= currentGroup.maxLevel) {
+                    val currentElements = currentGroup.elements.filter { it.value == currentLevel }.keys.toList()
+                    if (currentElements.isEmpty()) {
+                        currentLevel++
+                        continue
                     }
-                    return@DDMin predictResult
+                    val notCurrentElements = currentGroup.elements.filter { it.value != currentLevel }
+                    val ddmin = DDMin {
+                        val group = currentGroup.copyOf(it.associateWith { currentLevel } + notCurrentElements)
+                        group.reconstructDependencies()
+                        val predictResult = predict(group)
+                        if (predictResult) {
+                            currentGroup = group.applyEdit()
+                        }
+                        return@DDMin predictResult
+                    }
+                    ddmin.execute(currentElements)
+                    currentLevel++
                 }
-                ddmin.execute(currentElements)
-                currentLevel++
+                val fileContents = currentGroup.fileContents()
+                if (fileContents in appearedResult) {
+                    saveResult(currentGroup.fileContents())
+                    break
+                }
+                appearedResult.add(fileContents)
             }
-            saveResult(currentGroup.fileContents())
 
             println("predict times: $predictTimes")
+            println("cache hit times: ${fileContentsCache.values.sumOf { it.second }}")
         }
     }
 
