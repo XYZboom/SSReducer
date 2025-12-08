@@ -171,3 +171,7 @@ kotlin {
 application {
     mainClass = "io.github.xyzboom.ssreducer.SSReducer"
 }
+
+tasks.runIde {
+    this@runIde.systemProperty("java.awt.headless", "true")
+}

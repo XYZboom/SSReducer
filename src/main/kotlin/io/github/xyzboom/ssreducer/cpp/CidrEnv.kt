@@ -14,8 +14,11 @@ import com.intellij.psi.PsiFileFactory
 import com.intellij.psi.PsiManager
 import com.intellij.psi.impl.PsiFileFactoryImpl
 import com.intellij.psi.impl.PsiManagerImpl
+import com.intellij.psi.impl.PsiModificationTrackerImpl
+import com.intellij.psi.impl.source.resolve.ResolveCache
 import com.intellij.psi.impl.source.tree.injected.InjectedLanguageManagerImpl
 import com.intellij.psi.util.CachedValuesManager
+import com.intellij.psi.util.PsiModificationTracker
 import com.intellij.util.CachedValuesManagerImpl
 import com.jetbrains.cidr.lang.OCFileType
 import com.jetbrains.cidr.lang.OCLanguage
@@ -23,9 +26,13 @@ import com.jetbrains.cidr.lang.parser.OCParserDefinition
 import com.jetbrains.cidr.lang.preprocessor.OCHeaderContextCache
 import com.jetbrains.cidr.lang.preprocessor.OCInclusionContextLazyGetDefinitionProvider
 import com.jetbrains.cidr.lang.preprocessor.OCResolveRootAndConfigurationCache
+import com.jetbrains.cidr.lang.preprocessor.OCResolveRootAndConfigurationProvider
 import com.jetbrains.cidr.lang.settings.OCResolveContextSettings
 import com.jetbrains.cidr.lang.symbols.symtable.EP_NAME
 import com.jetbrains.cidr.lang.symbols.symtable.FileSymbolTableProvider
+import com.jetbrains.cidr.lang.symbols.symtable.FileSymbolTablesCache
+import com.jetbrains.cidr.lang.symbols.symtable.OCBuildSymbolsVetoExtension
+import com.jetbrains.cidr.lang.symbols.symtable.OCSymbolTableProvider
 import com.jetbrains.cidr.lang.workspace.OCLanguageKindCalculatorHelper
 import com.jetbrains.cidr.lang.workspace.OCWorkspace
 import com.jetbrains.cidr.lang.workspace.OCWorkspaceImpl
@@ -69,6 +76,8 @@ class CidrEnv {
         CoreApplicationEnvironment.registerExtensionPoint(
             appExtArea, EP_NAME, FileSymbolTableProvider::class.java
         )
+        appExtArea.getExtensionPoint(EP_NAME)
+            .registerExtension(OCSymbolTableProvider(), appEnv.parentDisposable)
         CoreApplicationEnvironment.registerExtensionPoint(
             appExtArea, OCLanguageKindCalculatorHelper.EP_NAME, OCLanguageKindCalculatorHelper::class.java
         )
@@ -99,6 +108,26 @@ class CidrEnv {
         LanguageParserDefinitions.INSTANCE.addExplicitExtension(
             OCLanguage.getInstance(),
             OCParserDefinition()
+        )
+        project.registerService(
+            ResolveCache::class.java,
+            ResolveCache::class.java
+        )
+        project.registerService(
+            FileSymbolTablesCache::class.java,
+            FileSymbolTablesCache::class.java
+        )
+        CoreApplicationEnvironment.registerExtensionPoint(
+            appExtArea, OCBuildSymbolsVetoExtension.EP_NAME,
+            OCBuildSymbolsVetoExtension::class.java
+        )
+        CoreApplicationEnvironment.registerExtensionPoint(
+            appExtArea, OCResolveRootAndConfigurationProvider.EP_NAME,
+            OCResolveRootAndConfigurationProvider::class.java
+        )
+        project.registerService(
+            PsiModificationTracker::class.java,
+            PsiModificationTrackerImpl::class.java
         )
         return appEnv to project
     }
