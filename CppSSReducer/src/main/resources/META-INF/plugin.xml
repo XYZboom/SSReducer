@@ -1,0 +1,44 @@
+<!-- Plugin Configuration File. Read more: https://plugins.jetbrains.com/docs/intellij/plugin-configuration-file.html -->
+<idea-plugin>
+    <!-- Unique identifier of the plugin. It should be FQN. It cannot be changed between the plugin versions. -->
+    <id>io.github.xyzboom.demo</id>
+
+    <!-- Public plugin name should be written in Title Case.
+         Guidelines: https://plugins.jetbrains.com/docs/marketplace/best-practices-for-listing.html#plugin-name -->
+    <name>CppSSReducer</name>
+
+    <!-- A displayed Vendor name or Organization ID displayed on the Plugins Page. -->
+    <vendor url="https://www.yourcompany.com">YourCompany</vendor>
+
+    <!-- Description of the plugin displayed on the Plugin Page and IDE Plugin Manager.
+         Guidelines: https://plugins.jetbrains.com/docs/marketplace/best-practices-for-listing.html#plugin-description -->
+    <description><![CDATA[
+        Enter short description for your plugin here.<br>
+        <em>most HTML tags may be used</em>
+    ]]></description>
+
+    <!-- Product and plugin compatibility requirements.
+         Read more: https://plugins.jetbrains.com/docs/intellij/plugin-compatibility.html -->
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.cidr.lang</depends>
+    <depends>com.intellij.cidr.base</depends>
+    <depends>com.intellij.nativeDebug</depends>
+    <depends>com.intellij.clion</depends>
+
+    <!-- Extension points defined by the plugin.
+         Read more: https://plugins.jetbrains.com/docs/intellij/plugin-extension-points.html -->
+    <extensions defaultExtensionNs="com.intellij">
+        <globalInspection language="ObjectiveC"
+                          bundle="messages.SSReducerBundle"
+                          implementationClass="io.github.xyzboom.ssreducer.cpp.CppSSReducerInspection"
+                          key="inspection.cpp.SSReducer.display.name"
+                          groupKey="inspection.cpp.SSReducer.group.name"/>
+    </extensions>
+    <actions resource-bundle="messages.SSReducerBundle">
+        <action id="io.github.xyzboom.ssreducer.cpp.CppSSReducerAction"
+                class="io.github.xyzboom.ssreducer.cpp.CppSSReducerAction">
+            <add-to-group group-id="EditMenu" anchor="last"/>
+        </action>
+    </actions>
+    <resource-bundle>messages.SSReducerBundle</resource-bundle>
+</idea-plugin>

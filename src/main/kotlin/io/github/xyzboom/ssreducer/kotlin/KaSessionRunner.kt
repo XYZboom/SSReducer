@@ -119,6 +119,7 @@ import com.intellij.psi.impl.source.tree.TreeGenerator
 import com.intellij.workspaceModel.core.fileIndex.WorkspaceFileIndex
 import com.intellij.workspaceModel.core.fileIndex.WorkspaceFileIndexContributor
 import com.intellij.workspaceModel.core.fileIndex.impl.WorkspaceFileIndexImpl
+import io.github.xyzboom.ssreducer.MockSchemeManagerFactory
 import kotlin.jvm.java
 
 @Suppress("UnstableApiUsage")
