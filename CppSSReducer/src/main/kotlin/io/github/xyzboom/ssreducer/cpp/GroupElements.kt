@@ -4,14 +4,12 @@ import com.intellij.openapi.project.Project
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFile
 import com.intellij.psi.search.GlobalSearchScope
-import com.intellij.psi.search.searches.ReferenceSearcher
-import com.intellij.psi.search.searches.ReferencesSearch
 import com.intellij.psi.util.PsiTreeUtil
-import com.jetbrains.cidr.lang.psi.OCAssignmentExpression
 import com.jetbrains.cidr.lang.psi.OCCallExpression
 import com.jetbrains.cidr.lang.psi.OCDeclaration
 import com.jetbrains.cidr.lang.psi.OCDeclarator
 import com.jetbrains.cidr.lang.psi.OCExpression
+import com.jetbrains.cidr.lang.psi.OCExpressionStatement
 import com.jetbrains.cidr.lang.psi.OCFile
 import com.jetbrains.cidr.lang.psi.OCFunctionDeclaration
 import com.jetbrains.cidr.lang.psi.OCReferenceElement
@@ -148,12 +146,21 @@ class GroupElements(
         return false
     }
 
+    fun PsiElement.replaceOrDeleteParentStatement(createNewElement: () -> PsiElement) {
+        val parent = parent
+        if (parent is OCExpressionStatement && parent.expression === this) {
+            parent.delete()
+        } else {
+            replace(createNewElement())
+        }
+    }
+
     private fun editCallExpr(element: OCCallExpression, target: PsiElement) {
         if (target is OCDeclarator) {
             when (val targetParent = target.parent) {
                 is OCFunctionDeclaration -> {
                     val returnType = targetParent.returnType
-                    val defaultValueExpr =
+                    element.replaceOrDeleteParentStatement {
                         if (shouldBeDeleted(returnType, targetParent)) {
                             val pointerDepth = returnType.pointersDepth()
                             val extra = "*".repeat(pointerDepth)
@@ -161,7 +168,7 @@ class GroupElements(
                         } else {
                             createDefaultValueExprForType(returnType, element.context!!)
                         }
-                    element.replace(defaultValueExpr)
+                    }
                 }
             }
         }
@@ -176,8 +183,9 @@ class GroupElements(
                     if (parent2 is OCCallExpression) {
                         editCallExpr(parent2, target)
                     } else if (target.parent is OCFunctionDeclaration) {
-                        val voidPointer = OCElementFactory.expressionFromText("(void**)0", element.context!!)
-                        element.replace(voidPointer!!)
+                        element.replaceOrDeleteParentStatement {
+                            OCElementFactory.expressionFromText("(void**)0", element.context!!)!!
+                        }
                     }
                 }
             }
