@@ -1,4 +1,4 @@
-package io.github.xyzboom.ssreducer.kotlin
+package io.github.xyzboom.ssreducer
 
 import com.intellij.openapi.util.Key
 import com.intellij.psi.PsiElement
