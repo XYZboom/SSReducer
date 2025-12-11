@@ -53,7 +53,16 @@ abstract class CommonReducer(
     protected open val reducerName: String
         get() = this::class.simpleName!!
 
+    // key: fileContents value: predict result --- cache hit times
+    protected val fileContentsCache = mutableMapOf<Map<String, String>, Pair<Boolean, Int>>()
+    protected val appearedResult = mutableSetOf<Map<String, String>>()
+
     protected open fun predict(fileContents: Map<String, String>): Boolean {
+        val fileContentsCacheResult = fileContentsCache[fileContents]
+        if (fileContentsCacheResult != null) {
+            fileContentsCache[fileContents] = fileContentsCacheResult.first to fileContentsCacheResult.second + 1
+            return fileContentsCacheResult.first
+        }
         val tempDir: Path = Files.createTempDirectory(reducerName)
         tempDir.toFile().deleteOnExit()
         for ((path, content) in fileContents) {
@@ -77,9 +86,11 @@ abstract class CommonReducer(
         process.errorStream.bufferedReader().forEachLine {
             System.err.println(it)
         }
-        val predictResult = process.waitFor()
+        val predictExit = process.waitFor()
         predictTimes++
-        return predictResult == 0
+        val predictResult = predictExit == 0
+        fileContentsCache[fileContents] = predictResult to 0
+        return predictResult
     }
 
     protected open fun saveResult(fileContents: Map<String, String>) {

@@ -77,35 +77,44 @@ class KotlinJavaSSReducer : CommonReducer(workingDir), IReducer {
             GroupElements.groupElements(project, psiRoots)
             val copiedRoots = psiRoots.map { it.copy() as PsiFile }
             var currentGroup = GroupElements.groupElements(project, copiedRoots)
-            var currentLevel = 1
-            while (currentLevel <= currentGroup.maxLevel) {
-                val currentElements = currentGroup.elements.filter { it.value == currentLevel }.keys.toList()
-                if (currentElements.isEmpty()) {
-                    currentLevel++
-                    continue
-                }
-                val notCurrentElements = currentGroup.elements.filter { it.value != currentLevel }
-                val ddmin = DDMin {
-                    val group = currentGroup.copyOf(it.associateWith { currentLevel } + notCurrentElements)
-                    group.reconstructDependencies()
-                    val fileContents = group.fileContents()
-                    val predictResult = predict(fileContents)
-                    if (predictResult) {
-                        currentGroup = group.applyEdit()
+            while (true) {
+                var currentLevel = 1
+                while (currentLevel <= currentGroup.maxLevel) {
+                    val currentElements = currentGroup.elements.filter { it.value == currentLevel }.keys.toList()
+                    if (currentElements.isEmpty()) {
+                        currentLevel++
+                        continue
                     }
-                    return@DDMin predictResult
+                    val notCurrentElements = currentGroup.elements.filter { it.value != currentLevel }
+                    val ddmin = DDMin {
+                        val group = currentGroup.copyOf(it.associateWith { currentLevel } + notCurrentElements)
+                        group.reconstructDependencies()
+                        val fileContents = group.fileContents()
+                        val predictResult = predict(fileContents)
+                        if (predictResult) {
+                            currentGroup = group.applyEdit()
+                        }
+                        return@DDMin predictResult
+                    }
+                    ddmin.execute(currentElements)
+                    currentLevel++
                 }
-                ddmin.execute(currentElements)
-                currentLevel++
+                val fileContents = currentGroup.fileContents()
+                if (fileContents in appearedResult) {
+                    saveResult(currentGroup.fileContents())
+                    break
+                }
+                appearedResult.add(fileContents)
             }
             saveResult(currentGroup.fileContents())
 
             println("predict times: $predictTimes")
+            println("cache hit times: ${fileContentsCache.values.sumOf { it.second }}")
         }
     }
 
     override val reducerName: String
-        get() = super<CommonReducer>.reducerName
+        get() = super<IReducer>.reducerName
 
     override fun doReduce(args: Array<String>) {
         main(args)
