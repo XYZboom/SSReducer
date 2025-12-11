@@ -97,7 +97,7 @@ abstract class CommonReducer(
         val resultDir = if (resultDir != null) {
             File(resultDir!!)
         } else {
-            createUniqueDirectory(File("ssreducer"))
+            createUniqueDirectory(File(workingDir, "ssreducer"))
         }
         for ((path, content) in fileContents) {
             val file = File(resultDir, File(path).name)

@@ -23,31 +23,39 @@ class CppSSReducer(
         GroupElements.groupElements(project, ocFiles)
         val copiedRoots = ocFiles.map { it.copy() as OCFile }
         var currentGroup = GroupElements.groupElements(project, copiedRoots)
-        var currentLevel = 1
-        while (currentLevel <= currentGroup.maxLevel) {
-            val currentElements = currentGroup.elements.filter { it.value == currentLevel }.keys.toList()
-            if (currentElements.isEmpty()) {
-                currentLevel++
-                continue
-            }
-            val notCurrentElements = currentGroup.elements.filter { it.value != currentLevel }
-            val ddmin = DDMin {
-                val group = currentGroup.copyOf(it.associateWith { currentLevel } + notCurrentElements)
-                group.reconstructDependencies()
-                val fileContents = group.fileContents()
-                val predictResult = predict(fileContents)
-                if (predictResult) {
-                    // todo: CLion does not support reference resolve on copied elements now
-                    currentGroup = currentGroup.copyOf(it.associateWith { currentLevel } + notCurrentElements)
-//                    currentGroup = group.applyEdit()
+        var currentContents = currentGroup.fileContents()
+        while (true) {
+            var currentLevel = 1
+            while (currentLevel <= currentGroup.maxLevel) {
+                val currentElements = currentGroup.elements.filter { it.value == currentLevel }.keys.toList()
+                if (currentElements.isEmpty()) {
+                    currentLevel++
+                    continue
                 }
-                return@DDMin predictResult
+                val notCurrentElements = currentGroup.elements.filter { it.value != currentLevel }
+                val ddmin = DDMin {
+                    val group = currentGroup.copyOf(it.associateWith { currentLevel } + notCurrentElements)
+                    group.reconstructDependencies()
+                    val fileContents = group.fileContents()
+                    val predictResult = predict(fileContents)
+                    if (predictResult) {
+                        // todo: CLion does not support reference resolve on copied elements now
+                        currentContents = fileContents
+                        currentGroup = currentGroup.copyOf(it.associateWith { currentLevel } + notCurrentElements)
+                    }
+                    return@DDMin predictResult
+                }
+                ddmin.execute(currentElements)
+                currentLevel++
             }
-            ddmin.execute(currentElements)
-            currentLevel++
+            if (currentContents in appearedResult) {
+                saveResult(currentContents)
+                break
+            }
+            appearedResult.add(currentContents)
         }
-//        saveResult(currentGroup.fileContents())
 
-//        println("predict times: $predictTimes")
+        println("predict times: $predictTimes")
+        println("cache hit times: ${fileContentsCache.values.sumOf { it.second }}")
     }
 }
