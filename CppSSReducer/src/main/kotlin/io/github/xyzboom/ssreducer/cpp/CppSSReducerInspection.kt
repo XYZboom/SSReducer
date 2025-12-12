@@ -9,6 +9,7 @@ import kotlin.system.exitProcess
 import com.intellij.openapi.diagnostic.Logger
 import com.github.ajalt.clikt.core.main
 import com.intellij.openapi.project.DumbService
+import kotlin.time.measureTime
 
 class CppSSReducerInspection : GlobalInspectionTool() {
     companion object {
@@ -28,16 +29,20 @@ class CppSSReducerInspection : GlobalInspectionTool() {
                     "No arguments specified! " +
                             "Please Specify arguments using -DCppSSReducerExtraArgs=\"...\""
                 )
+                Runtime.getRuntime().halt(1)
                 exitProcess(1)
             }
             DumbService.getInstance(project).smartInvokeLater {
-                CppSSReducer(project.basePath!!, project).main(args.split(" ").filter(String::isNotEmpty))
-                exitProcess(0)
+                val times = measureTime {
+                    CppSSReducer(project.basePath!!, project).main(args.split(" ").filter(String::isNotEmpty))
+                }
+                println("reduce time: $times")
+                Runtime.getRuntime().halt(0)
             }
         }.exceptionOrNull()
         if (exception != null) {
             exception.printStackTrace()
-            exitProcess(1)
+            Runtime.getRuntime().halt(1)
         }
     }
 }

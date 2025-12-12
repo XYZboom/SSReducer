@@ -1,6 +1,7 @@
 package io.github.xyzboom.ssreducer.cpp
 
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.Key
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFile
 import com.intellij.psi.search.GlobalSearchScope
@@ -34,6 +35,8 @@ class GroupElements(
 
     companion object {
 
+        private val REF_TARGET_KEY = Key.create<List<PsiWrapper<*>>>("REF_TARGET_KEY")
+
         fun isTypedef(element: PsiElement): Boolean {
             return element is OCDeclaration && element.isTypedef
         }
@@ -49,6 +52,24 @@ class GroupElements(
             for (file in files) {
                 val stack = ArrayDeque<PsiElement>()
                 fun enterElement(element: PsiElement) {
+                    val targets = element.references.mapNotNull { it.resolve() ?: return@mapNotNull null }
+                    val callTarget = if (element is OCCallExpression) {
+                        val method = element.functionReferenceExpression.reference?.resolve()
+//                        if (method != null && !method.shouldBeDeleted()) {
+                            // todo
+                            /*for ((i, param) in method.parameters.withIndex()) {
+                                val sourceParam = param.sourceElement
+                                if (sourceParam.shouldBeDeleted()) {
+                                    element.argumentList?.expressions[i]?.let {
+                                        needDeleteElements.add(PsiWrapper.of(it))
+                                    }
+                                }
+                            }*/
+//                        }
+                        method
+                    } else null
+                    val allTargets = if (callTarget != null) targets + callTarget else targets
+                    element.putCopyableUserData(REF_TARGET_KEY, allTargets.map { PsiWrapper.of(it) })
                     if (isDecl(element)) {
                         stack.addFirst(element)
                         elements[PsiWrapper.of(element)] = stack.size
@@ -96,10 +117,14 @@ class GroupElements(
                 if (!isDecl(element)) {
                     return
                 }
+                val wrapper = PsiWrapper.of(element)
+                if (wrapper !in editedFrom) {
+                    return
+                }
                 val oriElement = PsiTreeUtil.findSameElementInCopy(element, oriFile)
                 val oriLevel = fromElements[PsiWrapper.of(oriElement)]
                 if (oriLevel != null) {
-                    copiedElements[PsiWrapper.of(element)] = oriLevel
+                    copiedElements[wrapper] = oriLevel
                 }
                 return
             }
@@ -244,24 +269,9 @@ class GroupElements(
 
         for (file in files) {
             fun recordNeedEdit(element: PsiElement) {
-                val targets = element.references.mapNotNull { it.resolve() ?: return@mapNotNull null }
-                val callTarget = if (element is OCCallExpression) {
-                    val method = element.functionReferenceExpression.reference?.resolve()
-                    if (method != null && !method.shouldBeDeleted()) {
-                        // todo
-                        /*for ((i, param) in method.parameters.withIndex()) {
-                            val sourceParam = param.sourceElement
-                            if (sourceParam.shouldBeDeleted()) {
-                                element.argumentList?.expressions[i]?.let {
-                                    needDeleteElements.add(PsiWrapper.of(it))
-                                }
-                            }
-                        }*/
-                    }
-                    method
-                } else null
-                val allTargets = if (callTarget != null) targets + callTarget else targets
-                for (target in allTargets) {
+                val allTargets = element.getCopyableUserData(REF_TARGET_KEY) ?: emptyList()
+                for (targetWrapper in allTargets) {
+                    val target = targetWrapper.element
                     if (target is OCDeclarator) {
                         if (target.parent.shouldBeDeleted()) {
                             needEdit.add(element to target)

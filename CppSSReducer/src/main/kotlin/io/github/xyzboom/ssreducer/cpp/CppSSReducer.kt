@@ -16,6 +16,21 @@ class CppSSReducer(
         doReduce()
     }
 
+    class Ref<T>(var value: T)
+
+    private val elementsCache = mutableMapOf<Set<PsiWrapper<*>>, Ref<Pair<Boolean, Int>>>()
+
+    private fun myPredict(group: GroupElements, fileContents: Map<String, String>): Boolean {
+        val elements = group.elements.keys
+        val cacheResult = elementsCache[elements]
+        if (cacheResult != null) {
+            val result = cacheResult.value.first
+            cacheResult.value = cacheResult.value.first to cacheResult.value.second + 1
+            return result
+        }
+        return predict(fileContents)
+    }
+
     private fun doReduce() {
         val localFileSystem = LocalFileSystem.getInstance()
         val vFiles = collectVirtualFilesByRoots(localFileSystem, sourceRoots)
@@ -47,11 +62,10 @@ class CppSSReducer(
                     val group = currentGroup.copyOf(remainElements)
                     group.reconstructDependencies()
                     val fileContents = group.fileContents()
-                    val predictResult = predict(fileContents)
+                    val predictResult = myPredict(group, fileContents)
                     if (predictResult) {
-                        // todo: CLion does not support reference resolve on copied elements now
                         currentContents = fileContents
-                        currentGroup = currentGroup.copyOf(remainElements)
+                        currentGroup = group.applyEdit()
                     }
                     return@DDMin predictResult
                 }
@@ -66,6 +80,7 @@ class CppSSReducer(
         }
 
         println("predict times: $predictTimes")
-        println("cache hit times: ${fileContentsCache.values.sumOf { it.second }}")
+        val cacheHitTimes = fileContentsCache.values.sumOf { it.second } + elementsCache.values.sumOf { it.value.second }
+        println("cache hit times: $cacheHitTimes")
     }
 }
