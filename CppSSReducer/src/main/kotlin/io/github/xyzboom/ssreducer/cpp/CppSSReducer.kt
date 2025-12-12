@@ -5,6 +5,7 @@ import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.psi.PsiManager
 import com.jetbrains.cidr.lang.psi.OCFile
 import io.github.xyzboom.ssreducer.CommonReducer
+import io.github.xyzboom.ssreducer.PsiWrapper
 import io.github.xyzboom.ssreducer.algorithm.DDMin
 
 class CppSSReducer(
@@ -28,13 +29,21 @@ class CppSSReducer(
             var currentLevel = 1
             while (currentLevel <= currentGroup.maxLevel) {
                 val currentElements = currentGroup.elements.filter { it.value == currentLevel }.keys.toList()
+                val (typedefs, currentNonTypedefs) =
+                    if (appearedResult.isEmpty()) {
+                        currentElements.partition {
+                            GroupElements.isTypedef(it.element)
+                        }
+                    } else {
+                        emptyList<PsiWrapper<*>>() to currentElements
+                    }
                 if (currentElements.isEmpty()) {
                     currentLevel++
                     continue
                 }
                 val notCurrentElements = currentGroup.elements.filter { it.value != currentLevel }
                 val ddmin = DDMin {
-                    val remainElements = it.associateWith { currentLevel } + notCurrentElements
+                    val remainElements = (it + typedefs).associateWith { currentLevel } + notCurrentElements
                     val group = currentGroup.copyOf(remainElements)
                     group.reconstructDependencies()
                     val fileContents = group.fileContents()
@@ -46,7 +55,7 @@ class CppSSReducer(
                     }
                     return@DDMin predictResult
                 }
-                ddmin.execute(currentElements)
+                ddmin.execute(currentNonTypedefs)
                 currentLevel++
             }
             if (currentContents in appearedResult) {

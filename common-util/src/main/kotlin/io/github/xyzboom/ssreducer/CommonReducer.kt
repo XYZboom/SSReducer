@@ -91,6 +91,9 @@ abstract class CommonReducer(
         predictTimes++
         val predictResult = predictExit == 0
         fileContentsCache[fileContents] = predictResult to 0
+        if (predictResult) {
+            println("$predictTimes is a successful predict")
+        }
         return predictResult
     }
 

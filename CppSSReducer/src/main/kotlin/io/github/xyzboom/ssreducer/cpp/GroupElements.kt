@@ -34,6 +34,10 @@ class GroupElements(
 
     companion object {
 
+        fun isTypedef(element: PsiElement): Boolean {
+            return element is OCDeclaration && element.isTypedef
+        }
+
         fun isDecl(element: PsiElement): Boolean {
             return element is OCDeclaration ||
                     element is OCFile // ||
