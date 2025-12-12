@@ -34,14 +34,15 @@ class CppSSReducer(
                 }
                 val notCurrentElements = currentGroup.elements.filter { it.value != currentLevel }
                 val ddmin = DDMin {
-                    val group = currentGroup.copyOf(it.associateWith { currentLevel } + notCurrentElements)
+                    val remainElements = it.associateWith { currentLevel } + notCurrentElements
+                    val group = currentGroup.copyOf(remainElements)
                     group.reconstructDependencies()
                     val fileContents = group.fileContents()
                     val predictResult = predict(fileContents)
                     if (predictResult) {
                         // todo: CLion does not support reference resolve on copied elements now
                         currentContents = fileContents
-                        currentGroup = currentGroup.copyOf(it.associateWith { currentLevel } + notCurrentElements)
+                        currentGroup = currentGroup.copyOf(remainElements)
                     }
                     return@DDMin predictResult
                 }

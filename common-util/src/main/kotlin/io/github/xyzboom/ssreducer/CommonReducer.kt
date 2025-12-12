@@ -38,7 +38,7 @@ abstract class CommonReducer(
 
     protected val sourceRoots by run<OptionDelegate<List<File>>> {
         option("--sourceRoots")
-            .file(mustExist = true, canBeDir = true, canBeFile = false, mustBeReadable = true)
+            .file(mustExist = true, canBeDir = true, canBeFile = true, mustBeReadable = true)
             .multiple(default = emptyList())
             .validate { files ->
                 require(files.all { file ->
@@ -64,6 +64,7 @@ abstract class CommonReducer(
             return fileContentsCacheResult.first
         }
         val tempDir: Path = Files.createTempDirectory(reducerName)
+        println("predict at temp dir: $tempDir")
         tempDir.toFile().deleteOnExit()
         for ((path, content) in fileContents) {
             val file = tempDir.resolve(path.removePrefix(workingDir).removePrefix("/")).toFile()

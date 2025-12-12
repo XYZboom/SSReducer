@@ -9,7 +9,6 @@ import kotlin.system.exitProcess
 import com.intellij.openapi.diagnostic.Logger
 import com.github.ajalt.clikt.core.main
 import com.intellij.openapi.project.DumbService
-import com.jetbrains.cidr.lang.util.ClangdCommonUtil
 
 class CppSSReducerInspection : GlobalInspectionTool() {
     companion object {
@@ -33,6 +32,7 @@ class CppSSReducerInspection : GlobalInspectionTool() {
             }
             DumbService.getInstance(project).smartInvokeLater {
                 CppSSReducer(project.basePath!!, project).main(args.split(" ").filter(String::isNotEmpty))
+                exitProcess(0)
             }
         }.exceptionOrNull()
         if (exception != null) {
