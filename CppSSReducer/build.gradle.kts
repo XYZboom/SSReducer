@@ -73,6 +73,10 @@ tasks.runIde {
         val extraArg = System.getProperty("CppSSReducerExtraArgs")
         if (extraArg != null) {
             systemProperty("CppSSReducerExtraArgs", extraArg)
+            systemProperty("idea.max.intellisense.filesize", "9999999")
+            systemProperty("idea.max.content.load.filesize", "9999999")
+            maxHeapSize = "8g"
+            minHeapSize = "8g"
         }
     }
 }

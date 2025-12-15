@@ -36,7 +36,7 @@ class CppSSReducer(
         val vFiles = collectVirtualFilesByRoots(localFileSystem, sourceRoots)
         val psiManager = PsiManager.getInstance(project)
         val ocFiles = vFiles.mapNotNull { psiManager.findFile(it) }.filterIsInstance<OCFile>()
-        GroupElements.groupElements(project, ocFiles)
+        GroupElements.preprocess(project, ocFiles)
         val copiedRoots = ocFiles.map { it.copy() as OCFile }
         var currentGroup = GroupElements.groupElements(project, copiedRoots)
         var currentContents = currentGroup.fileContents()

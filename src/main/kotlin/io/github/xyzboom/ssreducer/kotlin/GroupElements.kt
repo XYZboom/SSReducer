@@ -7,6 +7,7 @@ import com.intellij.psi.*
 import com.intellij.psi.codeStyle.JavaCodeStyleManager
 import com.intellij.psi.util.PsiTreeUtil
 import io.github.xyzboom.ssreducer.PsiWrapper
+import io.github.xyzboom.ssreducer.parentOfTypeAndDirectChild
 import org.jetbrains.kotlin.psi.KtVisitorVoid
 import kotlin.math.max
 
