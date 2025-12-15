@@ -12,6 +12,7 @@ import com.jetbrains.cidr.lang.symbols.OCResolveContext
 import com.jetbrains.cidr.lang.symbols.OCSymbol
 import com.jetbrains.cidr.lang.types.OCArrayType
 import com.jetbrains.cidr.lang.types.OCFunctionType
+import com.jetbrains.cidr.lang.types.OCIntType
 import com.jetbrains.cidr.lang.types.OCPointerType
 import com.jetbrains.cidr.lang.types.OCReferenceType
 import com.jetbrains.cidr.lang.types.OCStructType
@@ -229,6 +230,23 @@ class GroupElements(
         if (parent is OCExpressionStatement && parent.expression === this) {
             parent.delete()
         } else {
+            if (parent is OCAssignmentExpression) {
+                val parentSourceExpr = parent.sourceExpression
+                if (parent.receiverExpression === this && parentSourceExpr != null) {
+                    parent.replace(parentSourceExpr)
+                    return
+                }
+            } else if (parent is OCPrefixExpression || parent is OCPostfixExpression) {
+                parent.replaceOrDeleteParentStatement {
+                    createNewElement()
+                }
+                return
+            } else if (parent is OCReferenceExpression) {
+                parent.replaceOrDeleteParentStatement {
+                    createNewElement()
+                }
+                return
+            }
             replace(createNewElement())
         }
     }
@@ -256,7 +274,8 @@ class GroupElements(
                             val extra = "*".repeat(pointerDepth)
                             OCElementFactory.expressionFromText("((void***${extra})0)", element.context!!)!!
                         } else {
-                            createDefaultValueExprForType(returnType, element)
+                            val defaultValue = element.getUserData(TYPE_DEFAULT_VALUE_KEY)
+                            defaultValue ?: createDefaultValueExprForType(returnType, element)
                         }
                     }
                 }
@@ -309,6 +328,9 @@ class GroupElements(
     }
 
     private fun createDefaultValueExprForType(type: OCType, context: PsiElement): OCExpression {
+        if (type is OCIntType && !type.shouldBeDeleted(context)) {
+            return OCElementFactory.expressionFromText("((${type.name})0)", context)!!
+        }
         return OCElementFactory.expressionFromText("(*((${type.toPointerName(context)})0))", context)!!
 //        return OCElementFactory.expressionFromText("0", context)!!
     }
@@ -470,7 +492,7 @@ class GroupElements(
                 }
             }
 
-            val visitor = object : OCRecursiveVisitor() {
+            val visitor = object : OCReverseDFSVisitor() {
                 override fun visitElement(element: PsiElement) {
                     if (!element.isValid) return
                     super.visitElement(element)
@@ -483,22 +505,6 @@ class GroupElements(
 //                        }
                     }
                     recordNeedEdit(element)
-                }
-
-                override fun visitAssignmentExpression(expression: OCAssignmentExpression) {
-                    if (!expression.isValid) return
-                    if (PsiWrapper.of(expression) in needDeleteElements) return
-                    // we need to edit right first because sometimes
-                    // we may replace the whole assignment with the right
-                    expression.sourceExpression?.accept(this)
-                    expression.receiverExpression.accept(this)
-                }
-
-                override fun visitCallExpression(expression: OCCallExpression) {
-                    if (!expression.isValid) return
-                    if (PsiWrapper.of(expression) in needDeleteElements) return
-                    expression.argumentList.accept(this)
-                    expression.functionReferenceExpression.accept(this)
                 }
             }
             file.accept(visitor)

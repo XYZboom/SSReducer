@@ -28,7 +28,9 @@ class CppSSReducer(
             cacheResult.value = cacheResult.value.first to cacheResult.value.second + 1
             return result
         }
-        return predict(fileContents)
+        val result = predict(fileContents)
+        elementsCache[elements] = Ref(result to 0)
+        return result
     }
 
     private fun doReduce() {
