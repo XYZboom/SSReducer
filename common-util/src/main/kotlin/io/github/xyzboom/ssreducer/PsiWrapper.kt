@@ -4,13 +4,14 @@ import com.intellij.openapi.util.Key
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiManager
 import java.lang.ref.WeakReference
-import kotlin.uuid.ExperimentalUuidApi
-import kotlin.uuid.Uuid
+import kotlin.concurrent.atomics.AtomicLong
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
 
-@OptIn(ExperimentalUuidApi::class)
+@OptIn(ExperimentalAtomicApi::class)
 class PsiWrapper<out T : PsiElement> private constructor(val element: T) {
     companion object {
-        val UUID_KEY = Key.create<Uuid>("UUID_KEY")
+        val ID_KEY = Key.create<Long>("UUID_KEY")
+        private val currentId = AtomicLong(0)
         val WRAPPER_KEY = Key.create<WeakReference<PsiWrapper<*>>>("WRAPPER_KEY")
         fun <T : PsiElement> of(element: T): PsiWrapper<T> {
             val wrapper = element.getUserData(WRAPPER_KEY)?.get()
@@ -20,9 +21,9 @@ class PsiWrapper<out T : PsiElement> private constructor(val element: T) {
             }
             val createNewWrapper = PsiWrapper(element)
             element.putUserData(WRAPPER_KEY, WeakReference(createNewWrapper))
-            val oriUuid = element.getCopyableUserData(UUID_KEY)
-            if (oriUuid == null) {
-                element.putCopyableUserData(UUID_KEY, Uuid.random())
+            val oriId = element.getCopyableUserData(ID_KEY)
+            if (oriId == null) {
+                element.putCopyableUserData(ID_KEY, currentId.addAndFetch(1))
             }
             return createNewWrapper
         }
@@ -30,11 +31,11 @@ class PsiWrapper<out T : PsiElement> private constructor(val element: T) {
 
     private val manager = PsiManager.getInstance(element.project)
 
-    private val uuid: Uuid?
-        get() = element.getCopyableUserData(UUID_KEY)
+    val id: Long?
+        get() = element.getCopyableUserData(ID_KEY)
 
     override fun hashCode(): Int {
-        return uuid.hashCode()
+        return id.hashCode()
     }
 
     override fun equals(other: Any?): Boolean {
@@ -42,18 +43,18 @@ class PsiWrapper<out T : PsiElement> private constructor(val element: T) {
             return false
         }
         if (other is PsiWrapper<*>) {
-            val myUuid = uuid
-            val otherUuid = other.uuid
-            if (myUuid != null || otherUuid != null) {
-                return myUuid == otherUuid
+            val myId = id
+            val otherId = other.id
+            if (myId != null || otherId != null) {
+                return myId == otherId
             }
             return manager.areElementsEquivalent(this.element, other.element)
         }
         other as PsiElement
-        val myUuid = uuid
-        val otherUuid = other.getCopyableUserData(UUID_KEY)
-        if (myUuid != null || otherUuid != null) {
-            return myUuid == otherUuid
+        val myId = id
+        val otherId = other.getCopyableUserData(ID_KEY)
+        if (myId != null || otherId != null) {
+            return myId == otherId
         }
         return manager.areElementsEquivalent(this.element, other)
     }

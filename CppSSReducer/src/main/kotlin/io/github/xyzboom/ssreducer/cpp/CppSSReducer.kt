@@ -18,10 +18,10 @@ class CppSSReducer(
 
     class Ref<T>(var value: T)
 
-    private val elementsCache = mutableMapOf<Set<PsiWrapper<*>>, Ref<Pair<Boolean, Int>>>()
+    private val elementsCache = mutableMapOf<Set<Long?>, Ref<Pair<Boolean, Int>>>()
 
     private fun myPredict(group: GroupElements, fileContents: Map<String, String>): Boolean {
-        val elements = group.elements.keys
+        val elements = group.elements.keys.map { it.id }.toSet()
         val cacheResult = elementsCache[elements]
         if (cacheResult != null) {
             val result = cacheResult.value.first
@@ -58,8 +58,8 @@ class CppSSReducer(
                     currentLevel++
                     continue
                 }
-                val notCurrentElements = currentGroup.elements.filter { it.value != currentLevel }
                 val ddmin = DDMin {
+                    val notCurrentElements = currentGroup.elements.filter { ele -> ele.value != currentLevel }
                     val remainElements = (it + typedefs).associateWith { currentLevel } + notCurrentElements
                     val group = currentGroup.copyOf(remainElements)
                     group.reconstructDependencies()
@@ -82,7 +82,7 @@ class CppSSReducer(
         }
 
         println("predict times: $predictTimes")
-        val cacheHitTimes = fileContentsCache.values.sumOf { it.second } + elementsCache.values.sumOf { it.value.second }
-        println("cache hit times: $cacheHitTimes")
+        println("file cache hit times: ${fileContentsCache.values.sumOf { it.second }}")
+        println("elements cache hit times: ${elementsCache.values.sumOf { it.value.second }}")
     }
 }

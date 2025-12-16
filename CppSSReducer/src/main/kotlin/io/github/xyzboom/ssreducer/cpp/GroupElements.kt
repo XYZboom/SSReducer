@@ -26,8 +26,8 @@ import kotlin.math.max
 class GroupElements(
     val project: Project,
     val elements: MutableMap<PsiWrapper<*>, Int>,
-    val elementsInOriProgram: Set<PsiWrapper<*>>,
-    val maxLevel: Int,
+    val elementsInOriProgram: MutableSet<PsiWrapper<*>>,
+    var maxLevel: Int,
 ) {
 
     private val allScope = GlobalSearchScope.allScope(project)
@@ -89,7 +89,8 @@ class GroupElements(
 
         fun isDecl(element: PsiElement): Boolean {
             return element is OCDeclaration ||
-                    element is OCFile // ||
+                    element is OCFile ||
+                    element is OCStatement
         }
 
         fun groupElements(project: Project, files: Collection<OCFile>): GroupElements {
@@ -151,7 +152,7 @@ class GroupElements(
 
     fun applyEdit(): GroupElements {
         return GroupElements(
-            project, elements, HashSet(elements.keys), maxLevel
+            project, HashMap(elements), HashSet(elements.keys), maxLevel
         )
     }
 
@@ -160,9 +161,9 @@ class GroupElements(
 
         @Suppress("UNCHECKED_CAST")
         val files = editedFrom.filter { it.element is PsiFile }.map { it.element } as List<PsiFile>
-        val copiedFiles = files.associateWith { it.copy() as PsiFile }
+        val copiedFiles = files.map { it.copy() as PsiFile }
         val copiedElements = mutableMapOf<PsiWrapper<*>, Int>()
-        for ((oriFile, copiedFile) in copiedFiles) {
+        for (copiedFile in copiedFiles) {
             fun enterElement(element: PsiElement) {
                 if (!isDecl(element)) {
                     return
@@ -171,8 +172,7 @@ class GroupElements(
                 if (wrapper !in editedFrom) {
                     return
                 }
-                val oriElement = PsiTreeUtil.findSameElementInCopy(element, oriFile)
-                val oriLevel = fromElements[PsiWrapper.of(oriElement)]
+                val oriLevel = fromElements[wrapper]
                 if (oriLevel != null) {
                     copiedElements[wrapper] = oriLevel
                 }
@@ -188,7 +188,7 @@ class GroupElements(
             copiedFile.accept(visitor)
         }
         return GroupElements(
-            project, copiedElements, elementsInOriProgram, maxLevel
+            project, copiedElements, LinkedHashSet(elementsInOriProgram), maxLevel
         )
     }
 
@@ -264,7 +264,12 @@ class GroupElements(
                             val statement = OCElementFactory.statementFromText("0;", context) as OCExpressionStatement
                             statement.expression.replace(argument)
                             block.addBefore(OCElementFactory.newlineFromText(context), insertPos)
-                            block.addBefore(statement, insertPos)
+                            val addedStatement = block.addBefore(statement, insertPos)
+                            val statementWrapper = PsiWrapper.of(addedStatement)
+                            elementsInOriProgram.add(statementWrapper)
+                            if (!elements.contains(statementWrapper)) {
+                                elements[statementWrapper] = maxLevel + 1
+                            }
                         }
                     }
                     val returnType = targetParent.returnType
@@ -332,7 +337,6 @@ class GroupElements(
             return OCElementFactory.expressionFromText("((${type.name})0)", context)!!
         }
         return OCElementFactory.expressionFromText("(*((${type.toPointerName(context)})0))", context)!!
-//        return OCElementFactory.expressionFromText("0", context)!!
     }
 
     private fun editReference(element: OCReferenceElement, target: PsiElement) {
@@ -377,6 +381,7 @@ class GroupElements(
                     }
                 }
             }
+
             else -> reportMissedEdit(element, target)
         }
     }
@@ -403,12 +408,21 @@ class GroupElements(
             is OCDeclarator -> {
                 reportKnowMissedEdit(element, target)
             }
+
             else -> reportMissedEdit(element, target)
         }
     }
 
     private fun deleteElement(element: PsiElement) {
-        element.delete()
+        if (element !is OCExpression) {
+            element.delete()
+        } else {
+            val context = element.context!!
+            element.replaceOrDeleteParentStatement {
+                val defaultValue = element.getUserData(TYPE_DEFAULT_VALUE_KEY)
+                defaultValue ?: createDefaultValueExprForType(element.resolvedType, context)
+            }
+        }
     }
 
     fun PsiElement?.strictShouldBeDeleted(shouldDelete: Set<PsiWrapper<*>> = emptySet()): Boolean {
@@ -530,11 +544,6 @@ class GroupElements(
             }
         }
 
-//        for (file in files) {
-//            if (file is PsiJavaFile) {
-//                javaCodeStyleManager.shortenClassReferences(file)
-//                javaCodeStyleManager.optimizeImports(file)
-//            }
-//        }
+        maxLevel = elements.values.maxOrNull() ?: 1
     }
 }
