@@ -248,23 +248,6 @@ class GroupElements(
         if (target is OCDeclarator) {
             when (val targetParent = target.parent) {
                 is OCFunctionDeclaration -> {
-                    val arguments = element.arguments
-                    val pair = element.parentOfTypeAndDirectChild<OCBlockStatement>()
-                    if (pair != null) {
-                        val (block, insertPos) = pair
-                        val context = element.context!!
-                        for (argument in arguments) {
-                            val statement = OCElementFactory.statementFromText("0;", context) as OCExpressionStatement
-                            statement.expression.replace(argument)
-                            block.addBefore(OCElementFactory.newlineFromText(context), insertPos)
-                            val addedStatement = block.addBefore(statement, insertPos)
-                            val statementWrapper = PsiWrapper.of(addedStatement)
-                            elementsInOriProgram.add(statementWrapper)
-                            if (!elements.contains(statementWrapper)) {
-                                elements[statementWrapper] = maxLevel + 1
-                            }
-                        }
-                    }
                     val returnType = targetParent.returnType
                     element.replaceOrDeleteParentStatement {
                         if (returnType.shouldBeDeleted(targetParent)) {
@@ -276,6 +259,29 @@ class GroupElements(
                             defaultValue ?: createDefaultValueExprForType(returnType, element)
                         }
                     }
+                }
+                else -> reportMissedEdit(element, target)
+            }
+        } else {
+            reportMissedEdit(element, target)
+        }
+    }
+
+    private fun extractCall(element: OCCallExpression) {
+        val arguments = element.arguments
+        val pair = element.parentOfTypeAndDirectChild<OCBlockStatement>()
+        if (pair != null) {
+            val (block, insertPos) = pair
+            val context = element.context!!
+            for (argument in arguments) {
+                val statement = OCElementFactory.statementFromText("0;", context) as OCExpressionStatement
+                statement.expression.replace(argument)
+                block.addBefore(OCElementFactory.newlineFromText(context), insertPos)
+                val addedStatement = block.addBefore(statement, insertPos)
+                val statementWrapper = PsiWrapper.of(addedStatement)
+                elementsInOriProgram.add(statementWrapper)
+                if (!elements.contains(statementWrapper)) {
+                    elements[statementWrapper] = maxLevel + 1
                 }
             }
         }
@@ -347,38 +353,10 @@ class GroupElements(
                 else -> reportMissedEdit(element, target)
             }
             is OCReferenceExpression -> {
-                when (val parent2 = parent.parent) {
-                    is OCCallExpression -> {
-                        editCallExpr(parent2, target)
-                    }
-
-                    is OCFunctionDeclaration -> {
-                        element.replaceOrDeleteParentStatement {
-                            val defaultValue = element.parent?.getUserData(TYPE_DEFAULT_VALUE_KEY)
-                            defaultValue ?: OCElementFactory.expressionFromText("((void***)0)", element.context!!)!!
-                        }
-                    }
-
-                    is OCAssignmentExpression -> {
-                        if (parent2.receiverExpression === parent) {
-                            parent2.sourceExpression?.let { parent2.replace(it) }
-                        } else {
-                            element.replaceOrDeleteParentStatement {
-                                val defaultValue = element.parent?.getUserData(TYPE_DEFAULT_VALUE_KEY)
-                                defaultValue ?: OCElementFactory.expressionFromText(
-                                    "((void***)0)",
-                                    element.context!!
-                                )!!
-                            }
-                        }
-                    }
-
-                    else -> {
-                        element.replaceOrDeleteParentStatement {
-                            val defaultValue = element.parent?.getUserData(TYPE_DEFAULT_VALUE_KEY)
-                            defaultValue ?: OCElementFactory.expressionFromText("((void***)0)", element.context!!)!!
-                        }
-                    }
+                if (parent.children.size == 1 && parent.children.single() === element) {
+                    editExpr(parent, target)
+                } else {
+                    reportMissedEdit(element, target)
                 }
             }
 
@@ -390,10 +368,36 @@ class GroupElements(
         }
     }
 
+    private fun shouldEditParentInstead(element: OCExpression, parent: OCExpression): Boolean {
+        return when (parent) {
+            is OCArraySelectionExpression -> {
+                parent.arrayExpression === element
+            }
+            is OCCallExpression -> {
+                parent.functionReferenceExpression === element
+            }
+            else -> false
+        }
+    }
+
     private fun editExpr(element: OCExpression, target: PsiElement) {
-        element.replaceOrDeleteParentStatement {
-            val defaultValue = element.getUserData(TYPE_DEFAULT_VALUE_KEY)
-            defaultValue ?: OCElementFactory.expressionFromText("((void***)0)", element.context!!)!!
+        val parent = element.parent
+        when (parent) {
+            is OCCallExpression -> {
+                extractCall(parent)
+            }
+
+            is OCAssignmentExpression if parent.receiverExpression === parent -> {
+                parent.sourceExpression?.let { parent.replace(it) }
+            }
+        }
+        if (parent is OCExpression && shouldEditParentInstead(element, parent)) {
+            editExpr(parent, target)
+        } else {
+            element.replaceOrDeleteParentStatement {
+                val defaultValue = element.getUserData(TYPE_DEFAULT_VALUE_KEY)
+                defaultValue ?: OCElementFactory.expressionFromText("((void***)0)", element.context!!)!!
+            }
         }
     }
 
