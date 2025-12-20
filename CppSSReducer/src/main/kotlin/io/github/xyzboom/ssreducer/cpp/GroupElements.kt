@@ -22,6 +22,7 @@ import com.jetbrains.cidr.lang.util.OCElementFactory
 import io.github.xyzboom.ssreducer.PsiWrapper
 import io.github.xyzboom.ssreducer.parentOfTypeAndDirectChild
 import kotlin.math.max
+import com.intellij.psi.util.hasErrorElementInRange
 
 class GroupElements(
     val project: Project,
@@ -102,21 +103,13 @@ class GroupElements(
                     val targets = element.references.mapNotNull { it.resolve() ?: return@mapNotNull null }
                     val callTarget = if (element is OCCallExpression) {
                         val method = element.functionReferenceExpression.reference?.resolve()
-//                        if (method != null && !method.shouldBeDeleted()) {
-                        // todo
-                        /*for ((i, param) in method.parameters.withIndex()) {
-                            val sourceParam = param.sourceElement
-                            if (sourceParam.shouldBeDeleted()) {
-                                element.argumentList?.expressions[i]?.let {
-                                    needDeleteElements.add(PsiWrapper.of(it))
-                                }
-                            }
-                        }*/
-//                        }
                         method
                     } else null
                     val allTargets = if (callTarget != null) targets + callTarget else targets
                     element.putCopyableUserData(REF_TARGET_KEY, allTargets.map { PsiWrapper.of(it) })
+                    if (element.parent is OCReferenceExpression) {
+                        element.parent.putCopyableUserData(REF_TARGET_KEY, allTargets.map { PsiWrapper.of(it) })
+                    }
                     if (isDecl(element)) {
                         stack.addFirst(element)
                         // If no decl of current element found, we record current element.
@@ -310,6 +303,13 @@ class GroupElements(
         return name
     }
 
+    private fun OCType.unwrapPointer(): OCType {
+        if (this is OCPointerType) {
+            return this.refType.unwrapPointer()
+        }
+        return this
+    }
+
     private fun OCType.toPointerName(ocContext: PsiElement): String {
         if (this.shouldBeDeleted(ocContext)) {
             return "void ***"
@@ -323,7 +323,7 @@ class GroupElements(
             return "${returnTypeName}(*)($paramsName)"
         }
         if (this is OCPointerType) {
-            val pointerTo = refType.nameOrDeletedName(ocContext)
+            val pointerTo = refType.unwrapPointer().nameOrDeletedName(ocContext)
             return "${pointerTo}${"*".repeat(pointersDepth())}*"
         }
         if (this is OCStructType) {
@@ -380,6 +380,10 @@ class GroupElements(
                         }
                     }
                 }
+            }
+
+            is OCGotoStatement -> {
+                parent.delete()
             }
 
             else -> reportMissedEdit(element, target)
@@ -495,6 +499,20 @@ class GroupElements(
                         val (resolvedType, context) = typeAndContext
                         val defaultValue = createDefaultValueExprForType(resolvedType, context)
                         element.putUserData(TYPE_DEFAULT_VALUE_KEY, defaultValue)
+                    }
+                    if (element is OCCallExpression) {
+                        val methods =
+                            element.functionReferenceExpression.getCopyableUserData(REF_TARGET_KEY) ?: emptyList()
+                        for (methodWrapper in methods) {
+                            val method = methodWrapper.element
+                            if (method is OCFunctionDeclaration && !method.shouldBeDeleted()) {
+                                for ((i, param) in (method.parameters ?: emptyList()).withIndex()) {
+                                    if (param.shouldBeDeleted()) {
+                                        needDeleteElements.add(PsiWrapper.of(element.arguments[i]))
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
                 for (targetWrapper in allTargets) {

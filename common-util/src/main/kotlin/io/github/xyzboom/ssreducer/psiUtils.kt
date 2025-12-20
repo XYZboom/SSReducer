@@ -25,3 +25,14 @@ inline fun <reified T> PsiElement?.parentOfTypeAndDirectChild(): Pair<T, PsiElem
 
     return null
 }
+
+inline fun PsiElement.eligibleParent(predicate: (PsiElement) -> Boolean): PsiElement? {
+    var element: PsiElement? = this
+    while (element != null) {
+        if (predicate(element)) {
+            return element
+        }
+        element = element.parent
+    }
+    return null
+}
