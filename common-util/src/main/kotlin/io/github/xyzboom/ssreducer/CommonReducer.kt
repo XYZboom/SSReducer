@@ -2,10 +2,13 @@ package io.github.xyzboom.ssreducer
 
 import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.parameters.options.OptionDelegate
+import com.github.ajalt.clikt.parameters.options.OptionWithValues
+import com.github.ajalt.clikt.parameters.options.default
 import com.github.ajalt.clikt.parameters.options.multiple
 import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.options.required
 import com.github.ajalt.clikt.parameters.options.validate
+import com.github.ajalt.clikt.parameters.types.boolean
 import com.github.ajalt.clikt.parameters.types.file
 import java.io.File
 import java.nio.file.Files
@@ -13,7 +16,7 @@ import java.nio.file.Path
 
 abstract class CommonReducer(
     private val workingDir: String,
-): CliktCommand() {
+) : CliktCommand() {
     protected val predictScript by run<OptionDelegate<File>> {
         option("--predict", "-p")
             .file(mustExist = true, canBeDir = false, canBeFile = true, mustBeReadable = true)
@@ -47,6 +50,20 @@ abstract class CommonReducer(
                     "Source roots must inside current working directory: $workingDir"
                 }
             }
+    }
+
+    protected val targetDir by lazy {
+        if (resultDir != null) {
+            File(resultDir!!)
+        } else {
+            createUniqueDirectory(File(workingDir, "ssreducer"))
+        }
+    }
+
+    protected val saveTemps by run<OptionWithValues<Boolean, Boolean, Boolean>> {
+        option("--saveTemps")
+            .boolean()
+            .default(false)
     }
 
     protected var predictTimes = 0
@@ -94,19 +111,21 @@ abstract class CommonReducer(
         if (predictResult) {
             println("$predictTimes is a successful predict")
         }
+        if (saveTemps) {
+            saveResult(fileContents, File(targetDir, "${predictTimes}_${predictResult}"))
+        }
         return predictResult
     }
 
-    protected open fun saveResult(fileContents: Map<String, String>) {
-        val resultDir = if (resultDir != null) {
-            File(resultDir!!)
-        } else {
-            createUniqueDirectory(File(workingDir, "ssreducer"))
-        }
+    protected open fun saveResult(fileContents: Map<String, String>, targetDir: File) {
         for ((path, content) in fileContents) {
-            val file = File(resultDir, File(path).name)
+            val file = File(targetDir, File(path).name)
             file.parentFile.mkdirs()
             file.writeText(content)
         }
+    }
+
+    protected open fun saveResult(fileContents: Map<String, String>) {
+        saveResult(fileContents, targetDir)
     }
 }
