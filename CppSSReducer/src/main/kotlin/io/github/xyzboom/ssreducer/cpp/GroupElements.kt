@@ -23,6 +23,7 @@ import io.github.xyzboom.ssreducer.PsiWrapper
 import io.github.xyzboom.ssreducer.parentOfTypeAndDirectChild
 import kotlin.math.max
 import com.intellij.psi.util.hasErrorElementInRange
+import com.jetbrains.cidr.lang.symbols.OCSymbolHolder
 
 class GroupElements(
     val project: Project,
@@ -79,6 +80,20 @@ class GroupElements(
                         if (element is OCExpression) {
                             element.putCopyableUserData(TYPE_AND_CONTEXT_KEY, element.resolvedType to element.context!!)
                         }
+                        val targets = element.references.mapNotNull { it.resolve() ?: return@mapNotNull null }
+                        val callTarget = if (element is OCCallExpression) {
+                            val method = element.functionReferenceExpression.reference?.resolve()
+                            method
+                        } else null
+                        val allTargets = if (callTarget != null) targets + callTarget else targets
+                        element.putCopyableUserData(
+                            REF_TARGET_KEY,
+                            allTargets.mapNotNull { convertSymbolHolder(project, it) })
+                        if (element.parent is OCReferenceExpression) {
+                            element.parent.putCopyableUserData(
+                                REF_TARGET_KEY,
+                                allTargets.mapNotNull { convertSymbolHolder(project, it) })
+                        }
                     }
                 })
             }
@@ -94,22 +109,21 @@ class GroupElements(
                     element is OCStatement
         }
 
+        fun convertSymbolHolder(project: Project, element: PsiElement): PsiWrapper<*>? {
+            if (element is OCSymbolHolder<*>) {
+                val symbol = element.symbol ?: return null
+                val element = symbol.locateDefinition(project) ?: return null
+                return PsiWrapper.of(element)
+            }
+            return PsiWrapper.of(element)
+        }
+
         fun groupElements(project: Project, files: Collection<OCFile>): GroupElements {
             val elements = mutableMapOf<PsiWrapper<*>, Int>()
             var maxLevel = 0
             for (file in files) {
                 val stack = ArrayDeque<PsiElement>()
                 fun enterElement(element: PsiElement) {
-                    val targets = element.references.mapNotNull { it.resolve() ?: return@mapNotNull null }
-                    val callTarget = if (element is OCCallExpression) {
-                        val method = element.functionReferenceExpression.reference?.resolve()
-                        method
-                    } else null
-                    val allTargets = if (callTarget != null) targets + callTarget else targets
-                    element.putCopyableUserData(REF_TARGET_KEY, allTargets.map { PsiWrapper.of(it) })
-                    if (element.parent is OCReferenceExpression) {
-                        element.parent.putCopyableUserData(REF_TARGET_KEY, allTargets.map { PsiWrapper.of(it) })
-                    }
                     if (isDecl(element)) {
                         stack.addFirst(element)
                         // If no decl of current element found, we record current element.
@@ -260,6 +274,7 @@ class GroupElements(
                         }
                     }
                 }
+
                 else -> reportMissedEdit(element, target)
             }
         } else {
@@ -340,7 +355,7 @@ class GroupElements(
 
     private fun createDefaultValueExprForType(type: OCType, context: PsiElement): OCExpression {
         if (type is OCIntType && !type.shouldBeDeleted(context)) {
-            return OCElementFactory.expressionFromText("((${type.name})0)", context)!!
+            return OCElementFactory.expressionFromText("((${type.name})1)", context)!!
         }
         return OCElementFactory.expressionFromText("(*((${type.toPointerName(context)})0))", context)!!
     }
@@ -352,6 +367,7 @@ class GroupElements(
                 is OCTypeElement -> editTypeRef(parent2, target)
                 else -> reportMissedEdit(element, target)
             }
+
             is OCReferenceExpression -> {
                 if (parent.children.size == 1 && parent.children.single() === element) {
                     editExpr(parent, target)
@@ -373,9 +389,11 @@ class GroupElements(
             is OCArraySelectionExpression -> {
                 parent.arrayExpression === element
             }
+
             is OCCallExpression -> {
                 parent.functionReferenceExpression === element
             }
+
             else -> false
         }
     }
@@ -385,6 +403,13 @@ class GroupElements(
         when (parent) {
             is OCCallExpression -> {
                 extractCall(parent)
+                /*val targetParent = target.parent
+                if (targetParent is OCCallable<*>) {
+                    WriteCommandAction.runWriteCommandAction(project) {
+                        OCInlineMethodHandler().invokeSilently(targetParent, element)
+                    }
+                    return
+                }*/
             }
 
             is OCAssignmentExpression if parent.receiverExpression === parent -> {
