@@ -60,6 +60,6 @@ class PsiWrapper<out T : PsiElement> private constructor(val element: T) {
     }
 
     override fun toString(): String {
-        return element.toString()
+        return "$id $element"
     }
 }
