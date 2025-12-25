@@ -93,5 +93,6 @@ class CppSSReducer(
         println("predict times: $predictTimes")
         println("file cache hit times: ${fileContentsCache.values.sumOf { it.second }}")
         println("elements cache hit times: ${elementsCache.values.sumOf { it.value.second }}")
+        println("total predict duration: $predictDuration")
     }
 }

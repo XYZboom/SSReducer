@@ -13,6 +13,8 @@ import com.github.ajalt.clikt.parameters.types.file
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
+import kotlin.time.Duration
+import kotlin.time.measureTimedValue
 
 abstract class CommonReducer(
     private val workingDir: String,
@@ -67,6 +69,7 @@ abstract class CommonReducer(
     }
 
     protected var predictTimes = 0
+    protected var predictDuration = Duration.ZERO
     protected open val reducerName: String
         get() = this::class.simpleName!!
 
@@ -75,46 +78,54 @@ abstract class CommonReducer(
     protected val appearedResult = mutableSetOf<Map<String, String>>()
 
     protected open fun predict(fileContents: Map<String, String>): Boolean {
-        val fileContentsCacheResult = fileContentsCache[fileContents]
-        if (fileContentsCacheResult != null) {
-            fileContentsCache[fileContents] = fileContentsCacheResult.first to fileContentsCacheResult.second + 1
-            return fileContentsCacheResult.first
+        fun doPredict(): Boolean {
+            val fileContentsCacheResult = fileContentsCache[fileContents]
+            if (fileContentsCacheResult != null) {
+                fileContentsCache[fileContents] = fileContentsCacheResult.first to fileContentsCacheResult.second + 1
+                return fileContentsCacheResult.first
+            }
+            val tempDir: Path = Files.createTempDirectory(reducerName)
+            println("predict at temp dir: $tempDir")
+            tempDir.toFile().deleteOnExit()
+            for ((path, content) in fileContents) {
+                val file = tempDir.resolve(path.removePrefix(workingDir).removePrefix("/")).toFile()
+                file.parentFile.mkdirs()
+                file.writeText(content)
+            }
+            val scriptRelativePath = predictScript.absolutePath.removePrefix(workingDir).removePrefix("/")
+            val tempScript = tempDir.resolve(scriptRelativePath).toFile()
+            tempScript.deleteOnExit()
+            predictScript.copyTo(tempScript)
+            tempScript.setExecutable(true)
+            tempScript.setReadable(true)
+            val process = Runtime.getRuntime().exec(
+                tempScript.absolutePath, System.getenv().map { "${it.key}=${it.value}" }.toTypedArray(),
+                tempDir.toFile()
+            )
+            process.inputStream.bufferedReader().forEachLine {
+                println(it)
+            }
+            process.errorStream.bufferedReader().forEachLine {
+                System.err.println(it)
+            }
+            val predictExit = process.waitFor()
+            predictTimes++
+            val predictResult = predictExit == 0
+            fileContentsCache[fileContents] = predictResult to 0
+            if (predictResult) {
+                println("$predictTimes is a successful predict")
+            }
+            if (saveTemps) {
+                saveResult(fileContents, File(targetDir, "${predictTimes}_${predictResult}_${predictExit}"))
+            }
+            return predictResult
         }
-        val tempDir: Path = Files.createTempDirectory(reducerName)
-        println("predict at temp dir: $tempDir")
-        tempDir.toFile().deleteOnExit()
-        for ((path, content) in fileContents) {
-            val file = tempDir.resolve(path.removePrefix(workingDir).removePrefix("/")).toFile()
-            file.parentFile.mkdirs()
-            file.writeText(content)
+
+        val predictDuration = measureTimedValue {
+            doPredict()
         }
-        val scriptRelativePath = predictScript.absolutePath.removePrefix(workingDir).removePrefix("/")
-        val tempScript = tempDir.resolve(scriptRelativePath).toFile()
-        tempScript.deleteOnExit()
-        predictScript.copyTo(tempScript)
-        tempScript.setExecutable(true)
-        tempScript.setReadable(true)
-        val process = Runtime.getRuntime().exec(
-            tempScript.absolutePath, System.getenv().map { "${it.key}=${it.value}" }.toTypedArray(),
-            tempDir.toFile()
-        )
-        process.inputStream.bufferedReader().forEachLine {
-            println(it)
-        }
-        process.errorStream.bufferedReader().forEachLine {
-            System.err.println(it)
-        }
-        val predictExit = process.waitFor()
-        predictTimes++
-        val predictResult = predictExit == 0
-        fileContentsCache[fileContents] = predictResult to 0
-        if (predictResult) {
-            println("$predictTimes is a successful predict")
-        }
-        if (saveTemps) {
-            saveResult(fileContents, File(targetDir, "${predictTimes}_${predictResult}_${predictExit}"))
-        }
-        return predictResult
+        this.predictDuration += predictDuration.duration
+        return predictDuration.value
     }
 
     protected open fun saveResult(fileContents: Map<String, String>, targetDir: File) {
