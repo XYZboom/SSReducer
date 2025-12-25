@@ -34,6 +34,67 @@ class GroupElements(
 
     private val allScope = GlobalSearchScope.allScope(project)
 
+    private class ProcessVisitor(private val project: Project): OCRecursiveVisitor() {
+        override fun visitElement(element: PsiElement) {
+            super.visitElement(element)
+            PsiWrapper.of(element)
+            recordDeclAndDef(element)
+            if (element is OCExpression) {
+                element.putCopyableUserData(TYPE_AND_CONTEXT_KEY, element.resolvedType to element.context!!)
+            }
+            val targets = element.references.mapNotNull { it.resolve() ?: return@mapNotNull null }
+            val callTarget = if (element is OCCallExpression) {
+                val method = element.functionReferenceExpression.reference?.resolve()
+                method
+            } else null
+            val allTargets = if (callTarget != null) targets + callTarget else targets
+            val convertedTargets = allTargets.mapNotNull { convertSymbolHolder(project, it) }
+            element.putCopyableUserData(REF_TARGET_KEY, convertedTargets)
+            val parent = element.parent
+            if (parent is OCReferenceExpression) {
+                parent.putCopyableUserData(REF_TARGET_KEY, convertedTargets)
+            }
+        }
+
+        private fun recordDeclAndDef(element: PsiElement) {
+            if (element is OCSymbolDeclarator<*>) {
+                val symbol = element.symbol
+                if (symbol != null) {
+                    val defSymbol = symbol.getDefinitionSymbol(project)
+                    if (defSymbol != null) {
+                        val def = defSymbol.locateDefinition(project)
+                        val isAncestor = def?.let {
+                            PsiTreeUtil.isAncestor(element, it, false)
+                        } ?: true
+                        // !isAncestor means the definition is not the current element
+                        if (!isAncestor) {
+                            val defParent = def.parent!!
+                            element.putCopyableUserData(DEF_OF_DECL_KEY, PsiWrapper.of(defParent))
+                            defParent.putCopyableUserData(DECL_OF_DEF_KEY, PsiWrapper.of(element))
+                            if (element is OCFunctionDeclaration && defParent is OCFunctionDeclaration) {
+                                val declParams = element.parameters
+                                val defParams = defParent.parameters
+                                if (defParams != null && declParams != null) {
+                                    val paramCount = minOf(defParams.size, declParams.size)
+                                    for (i in 0 until paramCount) {
+                                        declParams[i].parent.putCopyableUserData(
+                                            DEF_OF_DECL_KEY,
+                                            PsiWrapper.of(defParams[i].parent)
+                                        )
+                                        defParams[i].parent.putCopyableUserData(
+                                            DECL_OF_DEF_KEY,
+                                            PsiWrapper.of(declParams[i].parent)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     companion object {
 
         private val REF_TARGET_KEY = Key.create<List<PsiWrapper<*>>>("REF_TARGET_KEY")
@@ -55,66 +116,7 @@ class GroupElements(
 
         fun preprocess(project: Project, files: Collection<OCFile>) {
             for (file in files) {
-                file.accept(object : OCRecursiveVisitor() {
-                    override fun visitElement(element: PsiElement) {
-                        super.visitElement(element)
-                        PsiWrapper.of(element)
-                        recordDeclAndDef(element)
-                        if (element is OCExpression) {
-                            element.putCopyableUserData(TYPE_AND_CONTEXT_KEY, element.resolvedType to element.context!!)
-                        }
-                        val targets = element.references.mapNotNull { it.resolve() ?: return@mapNotNull null }
-                        val callTarget = if (element is OCCallExpression) {
-                            val method = element.functionReferenceExpression.reference?.resolve()
-                            method
-                        } else null
-                        val allTargets = if (callTarget != null) targets + callTarget else targets
-                        val convertedTargets = allTargets.mapNotNull { convertSymbolHolder(project, it) }
-                        element.putCopyableUserData(REF_TARGET_KEY, convertedTargets)
-                        val parent = element.parent
-                        if (parent is OCReferenceExpression) {
-                            parent.putCopyableUserData(REF_TARGET_KEY, convertedTargets)
-                        }
-                    }
-
-                    private fun recordDeclAndDef(element: PsiElement) {
-                        if (element is OCSymbolDeclarator<*>) {
-                            val symbol = element.symbol
-                            if (symbol != null) {
-                                val defSymbol = symbol.getDefinitionSymbol(project)
-                                if (defSymbol != null) {
-                                    val def = defSymbol.locateDefinition(project)
-                                    val isAncestor = def?.let {
-                                        PsiTreeUtil.isAncestor(element, it, false)
-                                    } ?: true
-                                    // !isAncestor means the definition is not the current element
-                                    if (!isAncestor) {
-                                        val defParent = def.parent!!
-                                        element.putCopyableUserData(DEF_OF_DECL_KEY, PsiWrapper.of(defParent))
-                                        defParent.putCopyableUserData(DECL_OF_DEF_KEY, PsiWrapper.of(element))
-                                        if (element is OCFunctionDeclaration && defParent is OCFunctionDeclaration) {
-                                            val declParams = element.parameters
-                                            val defParams = defParent.parameters
-                                            if (defParams != null && declParams != null) {
-                                                val paramCount = minOf(defParams.size, declParams.size)
-                                                for (i in 0 until paramCount) {
-                                                    declParams[i].parent.putCopyableUserData(
-                                                        DEF_OF_DECL_KEY,
-                                                        PsiWrapper.of(defParams[i].parent)
-                                                    )
-                                                    defParams[i].parent.putCopyableUserData(
-                                                        DECL_OF_DEF_KEY,
-                                                        PsiWrapper.of(declParams[i].parent)
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                })
+                file.accept(ProcessVisitor(project))
             }
         }
 
@@ -357,10 +359,13 @@ class GroupElements(
     }
 
     private fun createDefaultValueExprForType(type: OCType, context: PsiElement): OCExpression {
-        if (type is OCIntType && !type.shouldBeDeleted(context)) {
-            return OCElementFactory.expressionFromText("((${type.name})1)", context)!!
+        val expr = if (type is OCIntType && !type.shouldBeDeleted(context)) {
+            OCElementFactory.expressionFromText("((${type.name})1)", context)!!
+        } else {
+            OCElementFactory.expressionFromText("(*((${type.toPointerName(context)})0))", context)!!
         }
-        return OCElementFactory.expressionFromText("(*((${type.toPointerName(context)})0))", context)!!
+        expr.accept(ProcessVisitor(project))
+        return expr
     }
 
     private fun editReference(element: OCReferenceElement, target: PsiElement) {
