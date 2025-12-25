@@ -112,7 +112,7 @@ abstract class CommonReducer(
             println("$predictTimes is a successful predict")
         }
         if (saveTemps) {
-            saveResult(fileContents, File(targetDir, "${predictTimes}_${predictResult}"))
+            saveResult(fileContents, File(targetDir, "${predictTimes}_${predictResult}_${predictExit}"))
         }
         return predictResult
     }
