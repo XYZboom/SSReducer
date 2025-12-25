@@ -34,7 +34,7 @@ class GroupElements(
 
     private val allScope = GlobalSearchScope.allScope(project)
 
-    private class ProcessVisitor(private val project: Project): OCRecursiveVisitor() {
+    private class ProcessVisitor(private val project: Project) : OCRecursiveVisitor() {
         override fun visitElement(element: PsiElement) {
             super.visitElement(element)
             PsiWrapper.of(element)
@@ -491,7 +491,7 @@ class GroupElements(
         return false // todo
     }
 
-    fun reconstructDependencies() {
+    fun preReconstructDependencies(): Pair<List<Pair<PsiElement, PsiElement>>, Set<PsiWrapper<PsiElement>>> {
         @Suppress("UNCHECKED_CAST")
         val files = elements.keys.filter { it.element is PsiFile }.map { it.element } as List<PsiFile>
         // we must resolve reference first. Otherwise, the reference will lose after delete.
@@ -589,6 +589,12 @@ class GroupElements(
             file.accept(visitor)
         }
 
+        return needEdit to needDeleteElements
+    }
+
+    fun reconstructDependencies(
+        needEdit: List<Pair<PsiElement, PsiElement>>, needDeleteElements: Set<PsiWrapper<PsiElement>>
+    ) {
         fun PsiElement.anyParentNeedDelete(): Boolean {
             if (PsiWrapper.of(this) in needDeleteElements) return true
             return parent?.anyParentNeedDelete() == true

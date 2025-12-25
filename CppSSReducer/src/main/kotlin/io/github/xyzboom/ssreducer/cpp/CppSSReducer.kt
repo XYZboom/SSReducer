@@ -20,17 +20,20 @@ class CppSSReducer(
 
     private val elementsCache = mutableMapOf<Set<Long?>, Ref<Pair<Boolean, Int>>>()
 
-    private fun myPredict(group: GroupElements, fileContents: Map<String, String>): Boolean {
-        val elements = group.elements.keys.map { it.id }.toSet()
+    private fun myPredict(elements: Set<Long?>, fileContents: Map<String, String>): Boolean {
+        val result = predict(fileContents)
+        elementsCache[elements] = Ref(result to 0)
+        return result
+    }
+
+    private fun elementsCacheResult(elements: Set<Long?>): Boolean? {
         val cacheResult = elementsCache[elements]
         if (cacheResult != null) {
             val result = cacheResult.value.first
             cacheResult.value = cacheResult.value.first to cacheResult.value.second + 1
             return result
         }
-        val result = predict(fileContents)
-        elementsCache[elements] = Ref(result to 0)
-        return result
+        return null
     }
 
     private fun doReduce() {
@@ -62,9 +65,15 @@ class CppSSReducer(
                     val notCurrentElements = currentGroup.elements.filter { ele -> ele.value != currentLevel }
                     val remainElements = (it + typedefs).associateWith { currentLevel } + notCurrentElements
                     val group = currentGroup.copyOf(remainElements)
-                    group.reconstructDependencies()
+                    val (needEdit, needDelete) = group.preReconstructDependencies()
+                    val elementIds = group.elements.keys.map { ele -> ele.id }.toSet()
+                    val cacheResult = elementsCacheResult(elementIds)
+                    if (cacheResult != null) {
+                        return@DDMin cacheResult
+                    }
+                    group.reconstructDependencies(needEdit, needDelete)
                     val fileContents = group.fileContents()
-                    val predictResult = myPredict(group, fileContents)
+                    val predictResult = myPredict(elementIds, fileContents)
                     if (predictResult) {
                         currentContents = fileContents
                         currentGroup = group.applyEdit()
