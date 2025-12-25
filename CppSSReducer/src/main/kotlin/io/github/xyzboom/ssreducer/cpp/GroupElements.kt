@@ -59,6 +59,25 @@ class GroupElements(
                     override fun visitElement(element: PsiElement) {
                         super.visitElement(element)
                         PsiWrapper.of(element)
+                        recordDeclAndDef(element)
+                        if (element is OCExpression) {
+                            element.putCopyableUserData(TYPE_AND_CONTEXT_KEY, element.resolvedType to element.context!!)
+                        }
+                        val targets = element.references.mapNotNull { it.resolve() ?: return@mapNotNull null }
+                        val callTarget = if (element is OCCallExpression) {
+                            val method = element.functionReferenceExpression.reference?.resolve()
+                            method
+                        } else null
+                        val allTargets = if (callTarget != null) targets + callTarget else targets
+                        val convertedTargets = allTargets.mapNotNull { convertSymbolHolder(project, it) }
+                        element.putCopyableUserData(REF_TARGET_KEY, convertedTargets)
+                        val parent = element.parent
+                        if (parent is OCReferenceExpression) {
+                            parent.putCopyableUserData(REF_TARGET_KEY, convertedTargets)
+                        }
+                    }
+
+                    private fun recordDeclAndDef(element: PsiElement) {
                         if (element is OCSymbolDeclarator<*>) {
                             val symbol = element.symbol
                             if (symbol != null) {
@@ -73,26 +92,26 @@ class GroupElements(
                                         val defParent = def.parent!!
                                         element.putCopyableUserData(DEF_OF_DECL_KEY, PsiWrapper.of(defParent))
                                         defParent.putCopyableUserData(DECL_OF_DEF_KEY, PsiWrapper.of(element))
+                                        if (element is OCFunctionDeclaration && defParent is OCFunctionDeclaration) {
+                                            val declParams = element.parameters
+                                            val defParams = defParent.parameters
+                                            if (defParams != null && declParams != null) {
+                                                val paramCount = minOf(defParams.size, declParams.size)
+                                                for (i in 0 until paramCount) {
+                                                    declParams[i].parent.putCopyableUserData(
+                                                        DEF_OF_DECL_KEY,
+                                                        PsiWrapper.of(defParams[i].parent)
+                                                    )
+                                                    defParams[i].parent.putCopyableUserData(
+                                                        DECL_OF_DEF_KEY,
+                                                        PsiWrapper.of(declParams[i].parent)
+                                                    )
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
-                        }
-                        if (element is OCExpression) {
-                            element.putCopyableUserData(TYPE_AND_CONTEXT_KEY, element.resolvedType to element.context!!)
-                        }
-                        val targets = element.references.mapNotNull { it.resolve() ?: return@mapNotNull null }
-                        val callTarget = if (element is OCCallExpression) {
-                            val method = element.functionReferenceExpression.reference?.resolve()
-                            method
-                        } else null
-                        val allTargets = if (callTarget != null) targets + callTarget else targets
-                        element.putCopyableUserData(
-                            REF_TARGET_KEY,
-                            allTargets.mapNotNull { convertSymbolHolder(project, it) })
-                        if (element.parent is OCReferenceExpression) {
-                            element.parent.putCopyableUserData(
-                                REF_TARGET_KEY,
-                                allTargets.mapNotNull { convertSymbolHolder(project, it) })
                         }
                     }
                 })
@@ -104,9 +123,17 @@ class GroupElements(
         }
 
         fun isDecl(element: PsiElement): Boolean {
-            return element is OCDeclaration ||
-                    element is OCFile ||
-                    element is OCStatement
+            return when (element) {
+                is OCDeclaration, is OCFile -> true
+                is OCStatement -> {
+                    val parent = element.parent
+                    if (parent is OCFunctionDeclaration) {
+                        parent.body !== element
+                    } else true
+                }
+
+                else -> false
+            }
         }
 
         fun convertSymbolHolder(project: Project, element: PsiElement): PsiWrapper<*>? {
@@ -258,30 +285,6 @@ class GroupElements(
         }
     }
 
-    private fun editCallExpr(element: OCCallExpression, target: PsiElement) {
-        if (target is OCDeclarator) {
-            when (val targetParent = target.parent) {
-                is OCFunctionDeclaration -> {
-                    val returnType = targetParent.returnType
-                    element.replaceOrDeleteParentStatement {
-                        if (returnType.shouldBeDeleted(targetParent)) {
-                            val pointerDepth = returnType.pointersDepth()
-                            val extra = "*".repeat(pointerDepth)
-                            OCElementFactory.expressionFromText("((void***${extra})0)", element.context!!)!!
-                        } else {
-                            val defaultValue = element.getUserData(TYPE_DEFAULT_VALUE_KEY)
-                            defaultValue ?: createDefaultValueExprForType(returnType, element)
-                        }
-                    }
-                }
-
-                else -> reportMissedEdit(element, target)
-            }
-        } else {
-            reportMissedEdit(element, target)
-        }
-    }
-
     private fun extractCall(element: OCCallExpression) {
         val arguments = element.arguments
         val pair = element.parentOfTypeAndDirectChild<OCBlockStatement>()
@@ -394,6 +397,10 @@ class GroupElements(
                 parent.functionReferenceExpression === element
             }
 
+            is OCQualifiedExpression -> {
+                parent.qualifier === element
+            }
+
             else -> false
         }
     }
@@ -447,15 +454,7 @@ class GroupElements(
     }
 
     private fun deleteElement(element: PsiElement) {
-        if (element !is OCExpression) {
-            element.delete()
-        } else {
-            val context = element.context!!
-            element.replaceOrDeleteParentStatement {
-                val defaultValue = element.getUserData(TYPE_DEFAULT_VALUE_KEY)
-                defaultValue ?: createDefaultValueExprForType(element.resolvedType, context)
-            }
-        }
+        element.delete()
     }
 
     fun PsiElement?.strictShouldBeDeleted(shouldDelete: Set<PsiWrapper<*>> = emptySet()): Boolean {
@@ -530,12 +529,26 @@ class GroupElements(
                         element.putUserData(TYPE_DEFAULT_VALUE_KEY, defaultValue)
                     }
                     if (element is OCCallExpression) {
-                        val methods =
-                            element.functionReferenceExpression.getCopyableUserData(REF_TARGET_KEY) ?: emptyList()
+                        val refExpr = element.functionReferenceExpression
+                        val refElement = PsiTreeUtil.findChildOfType(refExpr, OCReferenceElement::class.java)
+                        val methods = refElement?.getCopyableUserData(REF_TARGET_KEY) ?: emptyList()
                         for (methodWrapper in methods) {
-                            val method = methodWrapper.element
+                            val method = methodWrapper.element.parent
                             if (method is OCFunctionDeclaration && !method.shouldBeDeleted()) {
-                                for ((i, param) in (method.parameters ?: emptyList()).withIndex()) {
+                                val parameters = (method.parameters ?: emptyList()).filter {
+                                    val paramDecl = it.parent
+                                    if (PsiWrapper.of(paramDecl) in elementsInOriProgram) {
+                                        return@filter true
+                                    }
+                                    val defParamDecl = paramDecl.getCopyableUserData(DEF_OF_DECL_KEY)
+                                    if (defParamDecl != null && defParamDecl in elementsInOriProgram) {
+                                        return@filter true
+                                    }
+                                    val declParamDecl = paramDecl.getCopyableUserData(DECL_OF_DEF_KEY)
+                                    return@filter declParamDecl != null && declParamDecl in elementsInOriProgram
+                                }
+                                for ((i, param) in parameters.withIndex()) {
+                                    if (i >= element.arguments.size) break
                                     if (param.shouldBeDeleted()) {
                                         needDeleteElements.add(PsiWrapper.of(element.arguments[i]))
                                     }
@@ -582,7 +595,14 @@ class GroupElements(
             editElement(element, target)
         }
 
-        for (wrapper in needDeleteElements) {
+        val sortedNeedDelete = needDeleteElements.sortedBy {
+            if (it.element is OCParameterDeclaration) {
+                return@sortedBy 1
+            }
+            0
+        }
+
+        for (wrapper in sortedNeedDelete) {
             if (!wrapper.element.isValid) continue
             try {
                 deleteElement(wrapper.element)
