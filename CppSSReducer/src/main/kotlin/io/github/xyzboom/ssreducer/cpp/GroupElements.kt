@@ -22,8 +22,8 @@ import com.jetbrains.cidr.lang.util.OCElementFactory
 import io.github.xyzboom.ssreducer.PsiWrapper
 import io.github.xyzboom.ssreducer.parentOfTypeAndDirectChild
 import kotlin.math.max
-import com.intellij.psi.util.hasErrorElementInRange
 import com.jetbrains.cidr.lang.symbols.OCSymbolHolder
+import io.github.xyzboom.ssreducer.andThen
 
 class GroupElements(
     val project: Project,
@@ -34,7 +34,7 @@ class GroupElements(
 
     private val allScope = GlobalSearchScope.allScope(project)
 
-    private class ProcessVisitor(private val project: Project) : OCRecursiveVisitor() {
+    private class ProcessVisitor(private val project: Project) : OCReverseDFSVisitor() {
         override fun visitElement(element: PsiElement) {
             super.visitElement(element)
             PsiWrapper.of(element)
@@ -111,7 +111,6 @@ class GroupElements(
         private val DECL_OF_DEF_KEY = Key.create<PsiWrapper<*>>("DECL_OF_DEF_KEY")
         private val DEF_OF_DECL_KEY = Key.create<PsiWrapper<*>>("DEF_OF_DECL_KEY")
 
-        private val TYPE_DEFAULT_VALUE_KEY = Key.create<PsiElement>("TYPE_DEFAULT_VALUE_KEY")
         private val TYPE_AND_CONTEXT_KEY = Key.create<Pair<OCType, PsiElement>>("TYPE_AND_CONTEXT_KEY")
 
         fun preprocess(project: Project, files: Collection<OCFile>) {
@@ -368,27 +367,44 @@ class GroupElements(
         return expr
     }
 
-    private fun editReference(element: OCReferenceElement, target: PsiElement) {
-        when (val parent = element.parent) {
-            is OCTypeElement -> editTypeRef(element, target)
+    private fun OCExpression.defaultValueExpr(): OCExpression? {
+        val typeAndContext = getCopyableUserData(TYPE_AND_CONTEXT_KEY) ?: return null
+        val (resolvedType, context) = typeAndContext
+        val defaultValue = createDefaultValueExprForType(resolvedType, context)
+        return defaultValue
+    }
+
+    private fun editReference(element: OCReferenceElement, target: PsiElement): () -> Unit {
+        return when (val parent = element.parent) {
+            is OCTypeElement -> {
+                { editTypeRef(element, target) }
+            }
+
             is OCStruct -> when (val parent2 = parent.parent) {
-                is OCTypeElement -> editTypeRef(parent2, target)
-                else -> reportMissedEdit(element, target)
+                is OCTypeElement -> {
+                    { editTypeRef(parent2, target) }
+                }
+
+                else -> {
+                    { reportMissedEdit(element, target) }
+                }
             }
 
             is OCReferenceExpression -> {
                 if (parent.children.size == 1 && parent.children.single() === element) {
                     editExpr(parent, target)
                 } else {
-                    reportMissedEdit(element, target)
+                    { reportMissedEdit(element, target) }
                 }
             }
 
             is OCGotoStatement -> {
-                parent.delete()
+                { parent.delete() }
             }
 
-            else -> reportMissedEdit(element, target)
+            else -> {
+                { reportMissedEdit(element, target) }
+            }
         }
     }
 
@@ -410,11 +426,11 @@ class GroupElements(
         }
     }
 
-    private fun editExpr(element: OCExpression, target: PsiElement) {
+    private fun editExpr(element: OCExpression, target: PsiElement, previous: (() -> Unit)? = null): () -> Unit {
         val parent = element.parent
-        when (parent) {
+        val now: (() -> Unit)? = when (parent) {
             is OCCallExpression -> {
-                extractCall(parent)
+                { extractCall(parent) }
                 /*val targetParent = target.parent
                 if (targetParent is OCCallable<*>) {
                     WriteCommandAction.runWriteCommandAction(project) {
@@ -425,15 +441,19 @@ class GroupElements(
             }
 
             is OCAssignmentExpression if parent.receiverExpression === parent -> {
-                parent.sourceExpression?.let { parent.replace(it) }
+                { parent.sourceExpression?.let { parent.replace(it) } }
             }
+
+            else -> null
         }
-        if (parent is OCExpression && shouldEditParentInstead(element, parent)) {
-            editExpr(parent, target)
+        return if (parent is OCExpression && shouldEditParentInstead(element, parent)) {
+            editExpr(parent, target, previous.andThen(now))
         } else {
-            element.replaceOrDeleteParentStatement {
-                val defaultValue = element.getUserData(TYPE_DEFAULT_VALUE_KEY)
-                defaultValue ?: OCElementFactory.expressionFromText("((void***)0)", element.context!!)!!
+            {
+                element.replaceOrDeleteParentStatement {
+                    val defaultValue = element.defaultValueExpr()
+                    defaultValue ?: OCElementFactory.expressionFromText("((void***)0)", element.context!!)!!
+                }
             }
         }
     }
@@ -446,15 +466,17 @@ class GroupElements(
         // pass
     }
 
-    private fun editElement(element: PsiElement, target: PsiElement) {
-        when (element) {
+    private fun lazyEditElement(element: PsiElement, target: PsiElement): () -> Unit {
+        return when (element) {
             is OCReferenceElement -> editReference(element, target)
             is OCExpression -> editExpr(element, target)
             is OCDeclarator -> {
-                reportKnowMissedEdit(element, target)
+                { reportKnowMissedEdit(element, target) }
             }
 
-            else -> reportMissedEdit(element, target)
+            else -> {
+                { reportMissedEdit(element, target) }
+            }
         }
     }
 
@@ -491,11 +513,11 @@ class GroupElements(
         return false // todo
     }
 
-    fun preReconstructDependencies(): Pair<List<Pair<PsiElement, PsiElement>>, Set<PsiWrapper<PsiElement>>> {
+    fun preReconstructDependencies(): Pair<List<Pair<PsiElement, () -> Unit>>, Set<PsiWrapper<PsiElement>>> {
         @Suppress("UNCHECKED_CAST")
         val files = elements.keys.filter { it.element is PsiFile }.map { it.element } as List<PsiFile>
         // we must resolve reference first. Otherwise, the reference will lose after delete.
-        val needEdit = mutableListOf<Pair<PsiElement, PsiElement>>()
+        val needEdit = mutableListOf<Pair<PsiElement, () -> Unit>>()
         val needDeleteElements = mutableSetOf<PsiWrapper<PsiElement>>()
 
         for (file in files) {
@@ -527,12 +549,6 @@ class GroupElements(
             fun recordNeedEdit(element: PsiElement) {
                 val allTargets = element.getCopyableUserData(REF_TARGET_KEY) ?: emptyList()
                 if (element is OCExpression) {
-                    val typeAndContext = element.getCopyableUserData(TYPE_AND_CONTEXT_KEY)
-                    if (typeAndContext != null) {
-                        val (resolvedType, context) = typeAndContext
-                        val defaultValue = createDefaultValueExprForType(resolvedType, context)
-                        element.putUserData(TYPE_DEFAULT_VALUE_KEY, defaultValue)
-                    }
                     if (element is OCCallExpression) {
                         val refExpr = element.functionReferenceExpression
                         val refElement = PsiTreeUtil.findChildOfType(refExpr, OCReferenceElement::class.java)
@@ -565,7 +581,7 @@ class GroupElements(
                 for (targetWrapper in allTargets) {
                     val target = targetWrapper.element
                     if (target.shouldBeDeleted()) {
-                        needEdit.add(element to target)
+                        needEdit.add(element to lazyEditElement(element, target))
                         break
                     }
                 }
@@ -593,17 +609,17 @@ class GroupElements(
     }
 
     fun reconstructDependencies(
-        needEdit: List<Pair<PsiElement, PsiElement>>, needDeleteElements: Set<PsiWrapper<PsiElement>>
+        needEdit: List<Pair<PsiElement, () -> Unit>>, needDeleteElements: Set<PsiWrapper<PsiElement>>
     ) {
         fun PsiElement.anyParentNeedDelete(): Boolean {
             if (PsiWrapper.of(this) in needDeleteElements) return true
             return parent?.anyParentNeedDelete() == true
         }
 
-        for ((element, target) in needEdit) {
+        for ((element, editFunc) in needEdit) {
             if (!element.isValid) continue
             if (element.anyParentNeedDelete()) continue
-            editElement(element, target)
+            editFunc()
         }
 
         val sortedNeedDelete = needDeleteElements.sortedBy {

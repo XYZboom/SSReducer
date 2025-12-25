@@ -1,6 +1,5 @@
 package io.github.xyzboom.ssreducer
 
-import com.github.ajalt.clikt.core.ParameterHolder
 import java.io.File
 import java.io.IOException
 import java.nio.file.FileVisitResult
@@ -53,4 +52,14 @@ fun collectSourceFilePaths(root: Path, predicate: (Path) -> Boolean): List<Path>
         }
     )
     return result
+}
+
+fun (() -> Unit)?.andThen(other: (() -> Unit)?): (() -> Unit)? {
+    if (this == null && other == null) {
+        return null
+    }
+    return {
+        this?.invoke()
+        other?.invoke()
+    }
 }
