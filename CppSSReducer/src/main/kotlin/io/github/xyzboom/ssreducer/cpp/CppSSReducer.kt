@@ -1,13 +1,18 @@
 package io.github.xyzboom.ssreducer.cpp
 
+import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.psi.PsiManager
 import com.jetbrains.cidr.lang.psi.OCFile
 import io.github.xyzboom.ssreducer.CommonReducer
 import io.github.xyzboom.ssreducer.PsiWrapper
-import io.github.xyzboom.ssreducer.algorithm.DDMin
+import io.github.xyzboom.ssreducer.algorithm.DDMinConcurrent
+import java.util.concurrent.Callable
+import java.util.concurrent.ConcurrentHashMap
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
 
+@OptIn(ExperimentalAtomicApi::class)
 class CppSSReducer(
     workingDir: String,
     val project: Project,
@@ -18,7 +23,7 @@ class CppSSReducer(
 
     class Ref<T>(var value: T)
 
-    private val elementsCache = mutableMapOf<Set<Long?>, Ref<Pair<Boolean, Int>>>()
+    private val elementsCache = ConcurrentHashMap<Set<Long?>, Ref<Pair<Boolean, Int>>>()
 
     private fun myPredict(elements: Set<Long?>, fileContents: Map<String, String>): Boolean {
         val result = predict(fileContents)
@@ -61,18 +66,25 @@ class CppSSReducer(
                     currentLevel++
                     continue
                 }
-                val ddmin = DDMin {
+                val ddmin = DDMinConcurrent DDMin@ {
                     val notCurrentElements = currentGroup.elements.filter { ele -> ele.value != currentLevel }
                     val remainElements = (it + typedefs).associateWith { currentLevel } + notCurrentElements
-                    val group = currentGroup.copyOf(remainElements)
-                    val (needEdit, needDelete) = group.preReconstructDependencies()
+                    val group = ReadAction.nonBlocking(Callable {
+                        currentGroup.copyOf(remainElements)
+                    }).executeSynchronously()
+                    val (needEdit, needDelete) =
+                        ReadAction.nonBlocking(Callable {
+                            return@Callable group.preReconstructDependencies()
+                        }).executeSynchronously()
                     val elementIds = group.elements.keys.map { ele -> ele.id }.toSet()
                     val cacheResult = elementsCacheResult(elementIds)
                     if (cacheResult != null) {
                         return@DDMin cacheResult
                     }
-                    group.reconstructDependencies(needEdit, needDelete)
-                    val fileContents = group.fileContents()
+                    val fileContents = ReadAction.nonBlocking(Callable {
+                        group.reconstructDependencies(needEdit, needDelete)
+                        group.fileContents()
+                    }).executeSynchronously()
                     val predictResult = myPredict(elementIds, fileContents)
                     if (predictResult) {
                         currentContents = fileContents
@@ -83,16 +95,15 @@ class CppSSReducer(
                 ddmin.execute(currentNonTypedefs)
                 currentLevel++
             }
-            if (currentContents in appearedResult) {
+            if (appearedResult.containsKey(currentContents)) {
                 saveResult(currentContents)
                 break
             }
-            appearedResult.add(currentContents)
+            appearedResult[currentContents] = Unit
         }
 
-        println("predict times: $predictTimes")
+        println("predict times: ${predictTimes.load()}")
         println("file cache hit times: ${fileContentsCache.values.sumOf { it.second }}")
         println("elements cache hit times: ${elementsCache.values.sumOf { it.value.second }}")
-        println("total predict duration: $predictDuration")
     }
 }

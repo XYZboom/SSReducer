@@ -14,7 +14,9 @@ import org.jetbrains.kotlin.analysis.api.projectStructure.KaSourceModule
 import org.jetbrains.kotlin.config.JvmTarget
 import org.jetbrains.kotlin.config.LanguageVersion
 import java.io.File
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
 
+@OptIn(ExperimentalAtomicApi::class)
 class KotlinJavaSSReducer : CommonReducer(workingDir), IReducer {
     companion object {
         @JvmStatic
@@ -100,11 +102,11 @@ class KotlinJavaSSReducer : CommonReducer(workingDir), IReducer {
                     currentLevel++
                 }
                 val fileContents = currentGroup.fileContents()
-                if (fileContents in appearedResult) {
+                if (appearedResult.containsKey(fileContents)) {
                     saveResult(currentGroup.fileContents())
                     break
                 }
-                appearedResult.add(fileContents)
+                appearedResult[fileContents] = Unit
             }
             saveResult(currentGroup.fileContents())
 
