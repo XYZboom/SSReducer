@@ -10,10 +10,12 @@ import com.github.ajalt.clikt.parameters.options.required
 import com.github.ajalt.clikt.parameters.options.validate
 import com.github.ajalt.clikt.parameters.types.boolean
 import com.github.ajalt.clikt.parameters.types.file
+import com.github.ajalt.clikt.parameters.types.long
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.incrementAndFetch
@@ -29,6 +31,16 @@ abstract class CommonReducer(
             .validate { file ->
                 require(file.absolutePath.startsWith(workingDir)) {
                     "Predict script must inside current working directory: $workingDir"
+                }
+            }
+    }
+
+    protected val predictTimeOut by run<OptionDelegate<Long>> {
+        option("--predictTimeOut").long()
+            .default(10000L)
+            .validate { timeOut ->
+                require(timeOut > 0) {
+                    "Predict time out must be positive"
                 }
             }
     }
@@ -104,13 +116,25 @@ abstract class CommonReducer(
             tempScript.absolutePath, System.getenv().map { "${it.key}=${it.value}" }.toTypedArray(),
             tempDir.toFile()
         )
-        process.inputStream.bufferedReader().forEachLine {
-            println(it)
+        val predictExit = try {
+            process.inputStream.bufferedReader().forEachLine {
+                println(it)
+            }
+            process.errorStream.bufferedReader().forEachLine {
+                System.err.println(it)
+            }
+            val completed = process.waitFor(predictTimeOut, TimeUnit.MILLISECONDS)
+            if (!completed) {
+                process.destroyForcibly()
+                -1
+            } else {
+                process.exitValue()
+            }
+        } catch (_: InterruptedException) {
+            process.destroyForcibly()
+            println("destroy $predictTimeNow")
+            Thread.currentThread().interrupt()
         }
-        process.errorStream.bufferedReader().forEachLine {
-            System.err.println(it)
-        }
-        val predictExit = process.waitFor()
         val predictResult = predictExit == 0
         fileContentsCache[fileContents] = predictResult to 0
         if (predictResult) {
