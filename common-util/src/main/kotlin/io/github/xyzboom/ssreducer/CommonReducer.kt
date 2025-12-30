@@ -30,13 +30,13 @@ abstract class CommonReducer(
             .required()
             .validate { file ->
                 require(file.absolutePath.startsWith(workingDir)) {
-                    "Predict script must inside current working directory: $workingDir"
+                    "Predict script must be inside current working directory: $workingDir"
                 }
             }
     }
 
-    protected val predictTimeOut by run<OptionDelegate<Long>> {
-        option("--predictTimeOut").long()
+    protected val predictTimeout by run<OptionDelegate<Long>> {
+        option("--predictTimeout").long()
             .default(10000L)
             .validate { timeOut ->
                 require(timeOut > 0) {
@@ -64,7 +64,7 @@ abstract class CommonReducer(
                 require(files.all { file ->
                     file.absolutePath.startsWith(workingDir)
                 }) {
-                    "Source roots must inside current working directory: $workingDir"
+                    "Source roots must be inside current working directory: $workingDir"
                 }
             }
     }
@@ -123,7 +123,7 @@ abstract class CommonReducer(
             process.errorStream.bufferedReader().forEachLine {
                 System.err.println(it)
             }
-            val completed = process.waitFor(predictTimeOut, TimeUnit.MILLISECONDS)
+            val completed = process.waitFor(predictTimeout, TimeUnit.MILLISECONDS)
             if (!completed) {
                 process.destroyForcibly()
                 -1

@@ -89,7 +89,7 @@ These options are implemented in `CommonReducer`.
     - Must exist and be readable.
     - Must be located **inside the current working directory**.
 
-- `--predictTimeOut`
+- `--predictTimeout`
   - Type: long (milliseconds)
   - Default: `10000`
   - Meaning: timeout for a single predict run.
