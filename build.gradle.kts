@@ -27,6 +27,8 @@ val aaStreamexVersion: String by project
 val aaCoroutinesVersion: String by project
 
 dependencies {
+    implementation(project(":common-util"))
+
     listOf(
         "com.jetbrains.intellij.platform:util-rt",
         "com.jetbrains.intellij.platform:util-class-loader",

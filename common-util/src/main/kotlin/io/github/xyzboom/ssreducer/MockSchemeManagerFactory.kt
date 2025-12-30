@@ -1,4 +1,4 @@
-package io.github.xyzboom.ssreducer.kotlin
+package io.github.xyzboom.ssreducer
 
 import com.intellij.configurationStore.SchemeNameToFileName
 import com.intellij.configurationStore.StreamProvider
