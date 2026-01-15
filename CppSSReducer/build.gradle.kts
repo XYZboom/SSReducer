@@ -2,7 +2,7 @@ import kotlin.io.path.absolutePathString
 import kotlin.io.path.createTempDirectory
 
 plugins {
-    kotlin("jvm") version "2.2.21"
+    kotlin("jvm")
     application
     id("org.jetbrains.intellij.platform") version "2.7.1"
 }

@@ -2,5 +2,9 @@ plugins {
     id("org.gradle.toolchains.foojay-resolver-convention") version "0.8.0"
 }
 rootProject.name = "SSReducer"
-include("CppSSReducer")
+include("api")
 include("common-util")
+include("CppSSReducer")
+include("JVMBytecodeSSReducer")
+include("KotlinJavaSSReducer")
+include("core")
