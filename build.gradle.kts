@@ -1,7 +1,7 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmDefaultMode
 
 plugins {
-    kotlin("jvm") version "2.3.0"
+    kotlin("jvm") version "2.2.21"
 }
 
 allprojects {

@@ -54,6 +54,19 @@ fun collectSourceFilePaths(root: Path, predicate: (Path) -> Boolean): List<Path>
     return result
 }
 
+fun collectSourceFiles(sourceRoots: List<File>, predicate: (Path) -> Boolean): List<Path> {
+    val result = mutableListOf<Path>()
+    for (sourceRoot in sourceRoots) {
+        val sourceRootPath = sourceRoot.toPath()
+        if (sourceRoot.isDirectory()) {
+            result.addAll(collectSourceFilePaths(sourceRootPath, predicate))
+        } else if (predicate(sourceRootPath)) {
+            result.add(sourceRootPath)
+        }
+    }
+    return result
+}
+
 fun (() -> Unit)?.andThen(other: (() -> Unit)?): (() -> Unit)? {
     if (this == null && other == null) {
         return null

@@ -10,6 +10,7 @@ dependencies {
     api(project(":api"))
     implementation("com.github.ajalt.clikt:clikt:5.0.3")
     runtimeOnly(project(":KotlinJavaSSReducer"))
+    runtimeOnly(project(":JVMBytecodeSSReducer"))
 
     testImplementation(platform("org.junit:junit-bom:5.10.0"))
     testImplementation("org.junit.jupiter:junit-jupiter")
