@@ -21,10 +21,9 @@ dependencies {
     implementation("com.github.ajalt.clikt:clikt:5.0.3")
 
     intellijPlatform {
-        clion("2024.2.5")
+        clion("2025.2.6")
         bundledPlugins(
             "com.intellij.cidr.lang",
-            "com.intellij.cidr.base",
             "com.intellij.nativeDebug",
             "com.intellij.clion"
         )

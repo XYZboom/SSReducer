@@ -21,7 +21,6 @@
          Read more: https://plugins.jetbrains.com/docs/intellij/plugin-compatibility.html -->
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.cidr.lang</depends>
-    <depends>com.intellij.cidr.base</depends>
     <depends>com.intellij.nativeDebug</depends>
     <depends>com.intellij.clion</depends>
 
