@@ -1,19 +1,12 @@
 package io.github.xyzboom.ssreducer
 
 import com.github.ajalt.clikt.core.CliktCommand
-import com.github.ajalt.clikt.parameters.options.OptionDelegate
-import com.github.ajalt.clikt.parameters.options.OptionWithValues
-import com.github.ajalt.clikt.parameters.options.default
-import com.github.ajalt.clikt.parameters.options.multiple
-import com.github.ajalt.clikt.parameters.options.option
-import com.github.ajalt.clikt.parameters.options.required
-import com.github.ajalt.clikt.parameters.options.validate
+import com.github.ajalt.clikt.parameters.options.*
 import com.github.ajalt.clikt.parameters.types.boolean
 import com.github.ajalt.clikt.parameters.types.file
+import com.github.ajalt.clikt.parameters.types.int
 import com.github.ajalt.clikt.parameters.types.long
-import com.intellij.util.io.toByteArray
 import java.io.File
-import java.nio.ByteBuffer
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
@@ -85,6 +78,28 @@ abstract class CommonReducer(
             .default(false)
     }
 
+    protected val dependencyFiles by run<OptionDelegate<List<File>>> {
+        option("--deps")
+            .file(mustExist = true, mustBeReadable = true)
+            .multiple()
+            .help {
+                "Additional dependency files required for prediction. If is a directory, all files under it will be included."
+            }
+            .validate { files ->
+                require(files.all { file ->
+                    file.absolutePath.startsWith(workingDir)
+                }) {
+                    "Dependency files must be inside current working directory: $workingDir"
+                }
+            }
+    }
+
+    protected val jobs by run<OptionWithValues<Int, Int, Int>> {
+        option("-j", "--jobs")
+            .int()
+            .default(Runtime.getRuntime().availableProcessors())
+    }
+
     protected var predictTimes = AtomicInt(0)
     protected open val reducerName: String
         get() = this::class.simpleName!!
@@ -101,17 +116,7 @@ abstract class CommonReducer(
         }
         val tempDir: Path = Files.createTempDirectory(reducerName)
         tempDir.toFile().deleteOnExit()
-        for ((path, content) in fileContents) {
-            val file = tempDir.resolve(path.removePrefix(workingDir).removePrefix("/")).toFile()
-            file.parentFile.mkdirs()
-            content.saveTo(file)
-        }
-        val scriptRelativePath = predictScript.absolutePath.removePrefix(workingDir).removePrefix("/")
-        val tempScript = tempDir.resolve(scriptRelativePath).toFile()
-        tempScript.deleteOnExit()
-        predictScript.copyTo(tempScript)
-        tempScript.setExecutable(true)
-        tempScript.setReadable(true)
+        val tempScript = preparePredictFiles(fileContents, tempDir)
         val predictTimeNow = predictTimes.incrementAndFetch()
         println("predict $predictTimeNow at temp dir: $tempDir")
         val process = Runtime.getRuntime().exec(
@@ -148,6 +153,34 @@ abstract class CommonReducer(
         return predictResult
     }
 
+    private fun preparePredictFiles(
+        fileContents: Map<String, ISavable>,
+        tempDir: Path
+    ): File {
+        for ((path, content) in fileContents) {
+            val file = tempDir.resolve(path.removePrefix(workingDir).removePrefix("/")).toFile()
+            file.parentFile.mkdirs()
+            content.saveTo(file)
+        }
+        for (depFile in dependencyFiles) {
+            val file = tempDir.resolve(depFile.absolutePath.removePrefix(workingDir).removePrefix("/")).toFile()
+            if (depFile.isDirectory) {
+                file.mkdirs()
+                depFile.copyRecursively(file, true)
+            } else {
+                file.parentFile.mkdirs()
+                depFile.copyTo(file, true)
+            }
+        }
+        val scriptRelativePath = predictScript.absolutePath.removePrefix(workingDir).removePrefix("/")
+        val tempScript = tempDir.resolve(scriptRelativePath).toFile()
+        tempScript.deleteOnExit()
+        predictScript.copyTo(tempScript)
+        tempScript.setExecutable(true)
+        tempScript.setReadable(true)
+        return tempScript
+    }
+
     protected open fun saveResult(fileContents: Map<String, ISavable>, targetDir: File) {
         for ((path, content) in fileContents) {
             val file = File(targetDir, File(path).name)
@@ -162,5 +195,10 @@ abstract class CommonReducer(
 
     fun Map<String, String>.asSavable(): Map<String, ISavable> {
         return mapValues { (_, value) -> StringData(value) }
+    }
+
+    @JvmName("mapByteArrayAsSavable")
+    fun Map<String, ByteArray>.asSavable(): Map<String, ISavable> {
+        return mapValues { (_, value) -> ByteBufferData(value) }
     }
 }

@@ -12,7 +12,7 @@ import org.objectweb.asm.tree.MethodNode
 import org.objectweb.asm.tree.VarInsnNode
 import org.objectweb.asm.ClassReader
 
-fun parseClassTree(bytecode: ByteArray): ClassNode {
+fun parseClassNode(bytecode: ByteArray): ClassNode {
     val classNode = ClassNode()
     val classReader = ClassReader(bytecode)
     classReader.accept(classNode, ClassReader.EXPAND_FRAMES)

@@ -9,4 +9,6 @@ value class ByteBufferData(val data: ByteBuffer) : ISavable {
     override fun saveTo(file: File) {
         file.writeBytes(data.toByteArray())
     }
+
+    constructor(data: ByteArray) : this(ByteBuffer.wrap(data))
 }

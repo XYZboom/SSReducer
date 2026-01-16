@@ -3,9 +3,9 @@ package io.github.xyzboom.ssreducer.algorithm
 import kotlin.math.max
 import kotlin.math.min
 
-class DDMin<T>(private val testFunc: (List<T>) -> Boolean) {
+class DDMin<T>(private val testFunc: (List<T>) -> Boolean): IDDMin<T> {
 
-    fun execute(input: List<T>): List<T> {
+    override fun execute(input: List<T>): List<T> {
         if (input.isEmpty()) return input
         if (input.size == 1) {
             if (testFunc(emptyList())) return emptyList()
