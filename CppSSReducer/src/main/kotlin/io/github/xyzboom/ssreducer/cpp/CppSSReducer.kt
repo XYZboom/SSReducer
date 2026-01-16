@@ -7,6 +7,7 @@ import com.intellij.psi.PsiManager
 import com.jetbrains.cidr.lang.psi.OCFile
 import io.github.xyzboom.ssreducer.CommonReducer
 import io.github.xyzboom.ssreducer.PsiWrapper
+import io.github.xyzboom.ssreducer.StringData
 import io.github.xyzboom.ssreducer.algorithm.DDMinConcurrent
 import java.util.concurrent.Callable
 import java.util.concurrent.ConcurrentHashMap
@@ -26,7 +27,7 @@ class CppSSReducer(
     private val elementsCache = ConcurrentHashMap<Set<Long?>, Ref<Pair<Boolean, Int>>>()
 
     private fun myPredict(elements: Set<Long?>, fileContents: Map<String, String>): Boolean {
-        val result = predict(fileContents)
+        val result = predict(fileContents.asSavable())
         elementsCache[elements] = Ref(result to 0)
         return result
     }
@@ -95,11 +96,12 @@ class CppSSReducer(
                 ddmin.execute(currentNonTypedefs)
                 currentLevel++
             }
-            if (appearedResult.containsKey(currentContents)) {
-                saveResult(currentContents)
+            val currentSavable = currentContents.asSavable()
+            if (appearedResult.containsKey(currentSavable)) {
+                saveResult(currentSavable)
                 break
             }
-            appearedResult[currentContents] = Unit
+            appearedResult[currentSavable] = Unit
         }
 
         println("predict times: ${predictTimes.load()}")

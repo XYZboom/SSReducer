@@ -11,7 +11,9 @@ import com.github.ajalt.clikt.parameters.options.validate
 import com.github.ajalt.clikt.parameters.types.boolean
 import com.github.ajalt.clikt.parameters.types.file
 import com.github.ajalt.clikt.parameters.types.long
+import com.intellij.util.io.toByteArray
 import java.io.File
+import java.nio.ByteBuffer
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
@@ -88,10 +90,10 @@ abstract class CommonReducer(
         get() = this::class.simpleName!!
 
     // key: fileContents value: predict result --- cache hit times
-    protected val fileContentsCache = ConcurrentHashMap<Map<String, String>, Pair<Boolean, Int>>()
-    protected val appearedResult = ConcurrentHashMap<Map<String, String>, Unit>()
+    protected val fileContentsCache = ConcurrentHashMap<Map<String, ISavable>, Pair<Boolean, Int>>()
+    protected val appearedResult = ConcurrentHashMap<Map<String, ISavable>, Unit>()
 
-    protected open fun predict(fileContents: Map<String, String>): Boolean {
+    protected open fun predict(fileContents: Map<String, ISavable>): Boolean {
         val fileContentsCacheResult = fileContentsCache[fileContents]
         if (fileContentsCacheResult != null) {
             fileContentsCache[fileContents] = fileContentsCacheResult.first to fileContentsCacheResult.second + 1
@@ -102,7 +104,7 @@ abstract class CommonReducer(
         for ((path, content) in fileContents) {
             val file = tempDir.resolve(path.removePrefix(workingDir).removePrefix("/")).toFile()
             file.parentFile.mkdirs()
-            file.writeText(content)
+            content.saveTo(file)
         }
         val scriptRelativePath = predictScript.absolutePath.removePrefix(workingDir).removePrefix("/")
         val tempScript = tempDir.resolve(scriptRelativePath).toFile()
@@ -146,15 +148,19 @@ abstract class CommonReducer(
         return predictResult
     }
 
-    protected open fun saveResult(fileContents: Map<String, String>, targetDir: File) {
+    protected open fun saveResult(fileContents: Map<String, ISavable>, targetDir: File) {
         for ((path, content) in fileContents) {
             val file = File(targetDir, File(path).name)
             file.parentFile.mkdirs()
-            file.writeText(content)
+            content.saveTo(file)
         }
     }
 
-    protected open fun saveResult(fileContents: Map<String, String>) {
+    protected open fun saveResult(fileContents: Map<String, ISavable>) {
         saveResult(fileContents, targetDir)
+    }
+
+    fun Map<String, String>.asSavable(): Map<String, ISavable> {
+        return mapValues { (_, value) -> StringData(value) }
     }
 }

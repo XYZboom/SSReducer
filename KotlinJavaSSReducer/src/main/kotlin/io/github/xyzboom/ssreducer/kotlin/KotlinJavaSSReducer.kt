@@ -92,7 +92,7 @@ class KotlinJavaSSReducer : CommonReducer(workingDir), IReducer {
                         val group = currentGroup.copyOf(it.associateWith { currentLevel } + notCurrentElements)
                         group.reconstructDependencies()
                         val fileContents = group.fileContents()
-                        val predictResult = predict(fileContents)
+                        val predictResult = predict(fileContents.asSavable())
                         if (predictResult) {
                             currentGroup = group.applyEdit()
                         }
@@ -101,15 +101,13 @@ class KotlinJavaSSReducer : CommonReducer(workingDir), IReducer {
                     ddmin.execute(currentElements)
                     currentLevel++
                 }
-                val fileContents = currentGroup.fileContents()
+                val fileContents = currentGroup.fileContents().asSavable()
                 if (appearedResult.containsKey(fileContents)) {
-                    saveResult(currentGroup.fileContents())
+                    saveResult(fileContents)
                     break
                 }
                 appearedResult[fileContents] = Unit
             }
-            saveResult(currentGroup.fileContents())
-
             println("predict times: $predictTimes")
             println("cache hit times: ${fileContentsCache.values.sumOf { it.second }}")
         }
