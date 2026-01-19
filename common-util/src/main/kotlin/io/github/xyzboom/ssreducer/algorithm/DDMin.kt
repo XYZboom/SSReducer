@@ -3,12 +3,19 @@ package io.github.xyzboom.ssreducer.algorithm
 import kotlin.math.max
 import kotlin.math.min
 
-class DDMin<T>(private val testFunc: (List<T>) -> Boolean): IDDMin<T> {
+class DDMin<T, D>(
+    private val testFunc: (List<T>) -> Pair<Boolean, D>,
+    private val onSuccess: (List<T>, D) -> Unit = { _, _ -> }
+): IDDMin<T> {
 
     override fun execute(input: List<T>): List<T> {
         if (input.isEmpty()) return input
         if (input.size == 1) {
-            if (testFunc(emptyList())) return emptyList()
+            val (result, data) = testFunc(emptyList())
+            if (result) {
+                onSuccess(emptyList(), data)
+                return emptyList()
+            }
             return input
         }
 
@@ -21,7 +28,11 @@ class DDMin<T>(private val testFunc: (List<T>) -> Boolean): IDDMin<T> {
     ): List<T> {
         if (input.isEmpty()) return input
         if (input.size == 1) {
-            if (testFunc(emptyList())) return emptyList()
+            val (result, data) = testFunc(emptyList())
+            if (result) {
+                onSuccess(emptyList(), data)
+                return emptyList()
+            }
             return input
         }
         // split input into n parts
@@ -29,7 +40,9 @@ class DDMin<T>(private val testFunc: (List<T>) -> Boolean): IDDMin<T> {
 
         if (n > 2) {
             for (part in parts) {
-                if (testFunc(part)) {
+                val (result, data) = testFunc(part)
+                if (result) {
+                    onSuccess(part, data)
                     return executeRecursive(part, 2)
                 }
             }
@@ -39,7 +52,9 @@ class DDMin<T>(private val testFunc: (List<T>) -> Boolean): IDDMin<T> {
         for (i in parts.indices) {
             val complement = getComplement(parts, i)
             // if complement passes test, run on complement
-            if (testFunc(complement)) {
+            val (result, data) = testFunc(complement)
+            if (result) {
+                onSuccess(complement, data)
                 return executeRecursive(complement, max(n - 1, 2))
             }
         }

@@ -19,6 +19,7 @@ repositories {
 
 dependencies {
     implementation("com.github.ajalt.clikt:clikt:5.0.3")
+    implementation("org.apache.commons:commons-csv:1.14.1")
 
     intellijPlatform {
         clion("2025.2.6")

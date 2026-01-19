@@ -17,7 +17,7 @@ import kotlin.concurrent.atomics.incrementAndFetch
 
 @OptIn(ExperimentalAtomicApi::class)
 abstract class CommonReducer(
-    private val workingDir: String,
+    protected val workingDir: String,
 ) : CliktCommand() {
     protected val predictScript by run<OptionDelegate<File>> {
         option("--predict", "-p")
@@ -100,7 +100,11 @@ abstract class CommonReducer(
             .default(Runtime.getRuntime().availableProcessors())
     }
 
+    /**
+     * Predict script execution times, including those canceled.
+     */
     protected var predictTimes = AtomicInt(0)
+    protected var canceledPredictTimes = AtomicInt(0)
     protected open val reducerName: String
         get() = this::class.simpleName!!
 
@@ -140,6 +144,7 @@ abstract class CommonReducer(
         } catch (_: InterruptedException) {
             process.destroyForcibly()
             println("destroy $predictTimeNow")
+            canceledPredictTimes.incrementAndFetch()
             Thread.currentThread().interrupt()
         }
         val predictResult = predictExit == 0

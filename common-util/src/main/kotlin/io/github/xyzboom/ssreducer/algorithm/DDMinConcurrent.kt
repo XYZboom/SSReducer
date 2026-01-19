@@ -3,18 +3,24 @@ package io.github.xyzboom.ssreducer.algorithm
 import java.util.concurrent.ExecutorCompletionService
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.Future
 import kotlin.math.max
 import kotlin.math.min
 
-class DDMinConcurrent<T>(
+class DDMinConcurrent<T, D>(
     private val threadCount: Int = Runtime.getRuntime().availableProcessors(),
-    private val testFunc: (List<T>) -> Boolean
-): IDDMin<T> {
+    private val testFunc: (List<T>) -> Pair<Boolean, D>,
+    private val onSuccess: (List<T>, D) -> Unit = { _, _ -> },
+) : IDDMin<T> {
 
     override fun execute(input: List<T>): List<T> {
         if (input.isEmpty()) return input
         if (input.size == 1) {
-            if (testFunc(emptyList())) return emptyList()
+            val (result, data) = testFunc(emptyList())
+            if (result) {
+                onSuccess(emptyList(), data)
+                return emptyList()
+            }
             return input
         }
 
@@ -29,7 +35,11 @@ class DDMinConcurrent<T>(
     private fun executeRecursive(input: List<T>, n: Int, executor: ExecutorService): List<T> {
         if (input.isEmpty()) return input
         if (input.size == 1) {
-            if (testFunc(emptyList())) return emptyList()
+            val (result, data) = testFunc(emptyList())
+            if (result) {
+                onSuccess(emptyList(), data)
+                return emptyList()
+            }
             return input
         }
 
@@ -58,20 +68,24 @@ class DDMinConcurrent<T>(
 
     private fun firstPassingIndex(parts: List<List<T>>, executor: ExecutorService, complement: Boolean): Int {
         if (parts.isEmpty()) return -1
-        val completion = ExecutorCompletionService<Pair<Int, Boolean>>(executor)
-        val futures = mutableListOf<java.util.concurrent.Future<Pair<Int, Boolean>>>()
+        val completion = ExecutorCompletionService<Pair<Int, Pair<Boolean, D>?>>(executor)
+        val futures = mutableListOf<Future<Pair<Int, Pair<Boolean, D>?>>>()
+
+        val partsOrComplement = parts.mapIndexed { index, part ->
+            if (complement) {
+                getComplement(parts, index)
+            } else {
+                part
+            }
+        }
 
         for (i in parts.indices) {
-            val part = if (complement) {
-                getComplement(parts, i)
-            } else {
-                parts[i]
-            }
+            val part = partsOrComplement[i]
             val future = completion.submit {
                 try {
                     Pair(i, testFunc(part))
                 } catch (e: Exception) {
-                    Pair(i, false)
+                    null
                 }
             }
             futures.add(future)
@@ -80,13 +94,17 @@ class DDMinConcurrent<T>(
         try {
             repeat(parts.size) {
                 val completed = completion.take() // blocks until one completes
-                val (idx, result) = completed.get()
-                if (result) {
-                    // cancel remaining
-                    for (f in futures) {
-                        if (!f.isDone) f.cancel(true)
+                val (idx, pair) = completed.get()
+                if (pair != null) {
+                    val (result, data) = pair
+                    if (result) {
+                        // cancel remaining
+                        for (f in futures) {
+                            if (!f.isDone) f.cancel(true)
+                        }
+                        onSuccess(partsOrComplement[idx], data)
+                        return idx
                     }
-                    return idx
                 }
             }
         } catch (e: InterruptedException) {

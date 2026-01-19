@@ -1,7 +1,11 @@
 package io.github.xyzboom.ssreducer
 
+import com.intellij.lang.Language
+import com.intellij.lang.LanguageParserDefinitions
+import com.intellij.openapi.project.Project
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFile
+import com.intellij.psi.TokenType
 
 inline fun <reified T> PsiElement?.parentOfTypeAndDirectChild(): Pair<T, PsiElement>? {
     if (this == null) return null
@@ -35,4 +39,20 @@ inline fun PsiElement.eligibleParent(predicate: (PsiElement) -> Boolean): PsiEle
         element = element.parent
     }
     return null
+}
+
+fun countTokens(text: String, language: Language, project: Project): Int {
+    val lexer = LanguageParserDefinitions.INSTANCE
+        .forLanguage(language)
+        .createLexer(project)
+    lexer.start(text)
+    var count = 0
+    while (true) {
+        val tokenType = lexer.tokenType ?: break
+        if (tokenType != TokenType.WHITE_SPACE) {
+            count++
+        }
+        lexer.advance()
+    }
+    return count
 }
