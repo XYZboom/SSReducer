@@ -106,8 +106,7 @@ class CppSSReducer(
                 val onSuccess: (List<PsiWrapper<*>>, Pair<Map<String, String>, GroupElements>?) -> Unit =
                     onSuccess@{ _, data ->
                         // cached result, no need to change
-                        if (data == null) return@onSuccess
-                        val (fileContents, group) = data
+                        val (fileContents, group) = data ?: return@onSuccess
                         currentContents = fileContents
                         currentGroup = group.applyEdit()
                         profile(fileContents)
