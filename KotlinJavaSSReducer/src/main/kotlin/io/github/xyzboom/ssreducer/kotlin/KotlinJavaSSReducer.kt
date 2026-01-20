@@ -7,7 +7,10 @@ import com.github.ajalt.clikt.parameters.types.file
 import com.intellij.psi.PsiFile
 import io.github.xyzboom.ssreducer.CommonReducer
 import io.github.xyzboom.ssreducer.IReducer
+import io.github.xyzboom.ssreducer.ISavable
+import io.github.xyzboom.ssreducer.PsiWrapper
 import io.github.xyzboom.ssreducer.algorithm.DDMin
+import io.github.xyzboom.ssreducer.algorithm.DDMinConcurrent
 import io.github.xyzboom.ssreducer.workingDir
 import org.jetbrains.kotlin.analysis.api.KaExperimentalApi
 import org.jetbrains.kotlin.analysis.api.projectStructure.KaSourceModule
@@ -79,6 +82,7 @@ class KotlinJavaSSReducer : CommonReducer(workingDir), IReducer {
             GroupElements.groupElements(project, psiRoots)
             val copiedRoots = psiRoots.map { it.copy() as PsiFile }
             var currentGroup = GroupElements.groupElements(project, copiedRoots)
+            var currentFileContents = currentGroup.fileContents().asSavable()
             while (true) {
                 var currentLevel = 1
                 while (currentLevel <= currentGroup.maxLevel) {
@@ -88,25 +92,32 @@ class KotlinJavaSSReducer : CommonReducer(workingDir), IReducer {
                         continue
                     }
                     val notCurrentElements = currentGroup.elements.filter { it.value != currentLevel }
-                    val ddmin = DDMin {
-                        val group = currentGroup.copyOf(it.associateWith { currentLevel } + notCurrentElements)
-                        group.reconstructDependencies()
-                        val fileContents = group.fileContents()
-                        val predictResult = predict(fileContents.asSavable())
-                        if (predictResult) {
-                            currentGroup = group.applyEdit()
+                    val predict: (List<PsiWrapper<*>>) -> Pair<Boolean, Pair<GroupElements, Map<String, ISavable>>> =
+                        DDMin@{
+                            val group = currentGroup.copyOf(it.associateWith { currentLevel } + notCurrentElements)
+                            group.reconstructDependencies()
+                            val fileContents = group.fileContents().asSavable()
+                            val predictResult = predict(fileContents)
+                            return@DDMin predictResult to (group to fileContents)
                         }
-                        return@DDMin predictResult
+                    val onSuccess: (List<PsiWrapper<*>>, Pair<GroupElements, Map<String, ISavable>>) -> Unit =
+                        onSuccess@{ _, (remainGroup, fileContents) ->
+                            currentGroup = remainGroup.applyEdit()
+                            currentFileContents = fileContents
+                        }
+                    val ddmin = if (jobs == 1) {
+                        DDMin(predict, onSuccess)
+                    } else {
+                        DDMinConcurrent(jobs, predict, onSuccess)
                     }
                     ddmin.execute(currentElements)
                     currentLevel++
                 }
-                val fileContents = currentGroup.fileContents().asSavable()
-                if (appearedResult.containsKey(fileContents)) {
-                    saveResult(fileContents)
+                if (appearedResult.containsKey(currentFileContents)) {
+                    saveResult(currentFileContents)
                     break
                 }
-                appearedResult[fileContents] = Unit
+                appearedResult[currentFileContents] = Unit
             }
             println("predict times: $predictTimes")
             println("cache hit times: ${fileContentsCache.values.sumOf { it.second }}")
