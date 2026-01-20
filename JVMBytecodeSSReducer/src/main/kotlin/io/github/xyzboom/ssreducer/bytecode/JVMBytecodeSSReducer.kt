@@ -31,21 +31,23 @@ class JVMBytecodeSSReducer : CommonReducer(workingDir), IReducer {
                     continue
                 }
                 val notCurrenNodes = currentGroup.nodes.filter { it.value != currentLevel }
-                val predict: (List<BytecodeNode>) -> Boolean = DDMin@ { remainNodes ->
-                    val nodesNow = notCurrenNodes + remainNodes.associateWith { currentLevel }
-                    val remainGroup = currentGroup.copyOf(nodesNow)
-                    val fileContents = remainGroup.fileContents().asSavable()
-                    val predictResult = predict(fileContents)
-                    if (predictResult) {
+                val predict: (List<BytecodeNode>) -> Pair<Boolean, Pair<GroupedBytecodeNodes, Map<String, ISavable>>> =
+                    DDMin@{ remainNodes ->
+                        val nodesNow = notCurrenNodes + remainNodes.associateWith { currentLevel }
+                        val remainGroup = currentGroup.copyOf(nodesNow)
+                        val fileContents = remainGroup.fileContents().asSavable()
+                        val predictResult = predict(fileContents)
+                        return@DDMin predictResult to (currentGroup to currentContent)
+                    }
+                val onSuccess: (List<BytecodeNode>, Pair<GroupedBytecodeNodes, Map<String, ISavable>>) -> Unit =
+                    onSuccess@ { _, (remainGroup, fileContents) ->
                         currentGroup = remainGroup.applyEdit()
                         currentContent = fileContents
                     }
-                    return@DDMin predictResult
-                }
                 val ddmin = if (jobs == 1) {
-                    DDMin(predict)
+                    DDMin(predict, onSuccess)
                 } else {
-                    DDMinConcurrent(jobs, predict)
+                    DDMinConcurrent(jobs, predict, onSuccess)
                 }
                 ddmin.execute(currentNodes)
                 currentLevel++

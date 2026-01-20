@@ -1,18 +1,10 @@
 package io.github.xyzboom.ssreducer.bytecode
 
-import io.github.xyzboom.ssreducer.bytecode.nodes.BytecodeNode
-import io.github.xyzboom.ssreducer.bytecode.nodes.ClassBCNode
-import io.github.xyzboom.ssreducer.bytecode.nodes.DescOnlyBCNode
-import io.github.xyzboom.ssreducer.bytecode.nodes.FieldBCNode
-import io.github.xyzboom.ssreducer.bytecode.nodes.MethodBCNode
-import org.objectweb.asm.ClassVisitor
-import org.objectweb.asm.ClassWriter
-import org.objectweb.asm.FieldVisitor
-import org.objectweb.asm.MethodVisitor
-import org.objectweb.asm.Opcodes
-import org.objectweb.asm.Type
-import org.objectweb.asm.tree.FieldNode
-import org.objectweb.asm.tree.MethodNode
+import io.github.xyzboom.ssreducer.bytecode.nodes.*
+import org.objectweb.asm.*
+import org.objectweb.asm.commons.ClassRemapper
+import org.objectweb.asm.commons.MethodRemapper
+import org.objectweb.asm.commons.Remapper
 import java.nio.file.Path
 import kotlin.io.path.absolute
 import kotlin.io.path.pathString
@@ -27,6 +19,9 @@ class GroupedBytecodeNodes private constructor(
     private val oriNodes: MutableSet<BytecodeNode>
 ) {
     companion object {
+
+        private const val OBJECT_NAME = "java/lang/Object"
+
         fun groupNodes(sourceFiles: List<Path>, relativeTo: Path): GroupedBytecodeNodes {
             val classNodes = sourceFiles.map {
                 val classNode = parseClassNode(it.readBytes())
@@ -61,6 +56,103 @@ class GroupedBytecodeNodes private constructor(
         return this
     }
 
+    fun BytecodeNode.shouldBeDeleted(): Boolean {
+        return this in oriNodes && this !in nodes
+    }
+
+    fun MethodVisitor.newObject() {
+        visitTypeInsn(Opcodes.NEW, OBJECT_NAME)
+        visitInsn(Opcodes.DUP)
+        visitMethodInsn(
+            Opcodes.INVOKESPECIAL,
+            OBJECT_NAME,
+            "<init>",
+            "()V",
+            false
+        )
+    }
+
+    inner class MyRemapper : Remapper(Opcodes.ASM9) {
+        override fun map(internalName: String?): String? {
+            internalName ?: return null
+            val typeNode = DescOnlyBCNode(internalName)
+            if (typeNode.shouldBeDeleted()) {
+                return OBJECT_NAME
+            }
+            return super.map(internalName)
+        }
+    }
+
+    inner class MyClassRemapper(
+        classVisitor: ClassVisitor, remapper: Remapper
+    ) : ClassRemapper(classVisitor, remapper) {
+        override fun visitInnerClass(
+            name: String?, outerName: String?, innerName: String?, access: Int
+        ) {
+            val typeNode = DescOnlyBCNode(name ?: return super.visitInnerClass(name, outerName, innerName, access))
+            if (typeNode.shouldBeDeleted()) {
+                return
+            }
+            return super.visitInnerClass(name, outerName, innerName, access)
+        }
+
+        override fun visitMethod(
+            access: Int,
+            name: String?,
+            descriptor: String?,
+            signature: String?,
+            exceptions: Array<out String?>?
+        ): MethodVisitor? {
+            val superVisitor = super.visitMethod(access, name, descriptor, signature, exceptions) ?: return null
+            return MyMethodMapper(superVisitor, remapper)
+        }
+    }
+
+    inner class MyMethodMapper(
+        methodVisitor: MethodVisitor, remapper: Remapper
+    ) : MethodRemapper(methodVisitor, remapper) {
+        override fun visitMethodInsn(
+            opcodeAndSource: Int,
+            owner: String,
+            name: String,
+            descriptor: String,
+            isInterface: Boolean
+        ) {
+            val typeNode = DescOnlyBCNode(owner)
+            if (typeNode.shouldBeDeleted()) {
+                return if (opcodeAndSource != Opcodes.INVOKESPECIAL) {
+                    newObject()
+                } else {
+                    for (type in Type.getArgumentTypes(descriptor)) {
+                        // todo when stack top is array[0]
+                        // decompiler may generate: array[0]; which is not a legal java statement.
+                        if (type == Type.LONG_TYPE || type == Type.DOUBLE_TYPE) {
+                            super.visitInsn(Opcodes.POP2)
+                        } else {
+                            super.visitInsn(Opcodes.POP)
+                        }
+                    }
+                    visitMethodInsn(
+                        Opcodes.INVOKESPECIAL,
+                        OBJECT_NAME,
+                        "<init>",
+                        "()V",
+                        false
+                    )
+                }
+            }
+            super.visitMethodInsn(opcodeAndSource, owner, name, descriptor, isInterface)
+        }
+
+        override fun visitFieldInsn(opcode: Int, owner: String?, name: String?, descriptor: String?) {
+            val typeNode = DescOnlyBCNode(owner ?: return super.visitFieldInsn(opcode, owner, name, descriptor))
+            if (typeNode.shouldBeDeleted()) {
+                return newObject()
+            }
+            super.visitFieldInsn(opcode, owner, name, descriptor)
+        }
+    }
+
     /**
      * Dependencies are reconstructed during generate new content.
      */
@@ -71,51 +163,8 @@ class GroupedBytecodeNodes private constructor(
         for (clazz in classes) {
             val asmNode = clazz.asmNode
             val classWriter = ClassWriter(ClassWriter.COMPUTE_MAXS)
-            asmNode.accept(object : ClassVisitor(Opcodes.ASM9, classWriter) {
-                override fun visitField(
-                    access: Int,
-                    name: String?,
-                    descriptor: String?,
-                    signature: String?,
-                    value: Any?
-                ): FieldVisitor? {
-                    val field = FieldNode(access, name, descriptor, signature, value)
-                    val fieldBCNode = FieldBCNode(field, clazz)
-                    if (fieldBCNode !in nodes) {
-                        return null
-                    }
-                    val typeNode = DescOnlyBCNode(Type.getType(descriptor).className)
-                    if (typeNode !in oriNodes) {
-                        return super.visitField(access, name, descriptor, signature, value)
-                    }
-                    if (typeNode !in nodes) {
-                        return super.visitField(
-                            access,
-                            name,
-                            Type.getType(Any::class.java).descriptor,
-                            signature,
-                            value
-                        )
-                    }
-                    return super.visitField(access, name, descriptor, signature, value)
-                }
-
-                override fun visitMethod(
-                    access: Int,
-                    name: String?,
-                    descriptor: String?,
-                    signature: String?,
-                    exceptions: Array<out String?>?
-                ): MethodVisitor? {
-                    val method = MethodNode(access, name, descriptor, signature, exceptions)
-                    val methodBCNode = MethodBCNode(method, clazz)
-                    if (methodBCNode !in nodes) {
-                        return null
-                    }
-
-                    return super.visitMethod(access, name, descriptor, signature, exceptions)
-                }
-            })
+            val mapper = MyClassRemapper(classWriter, MyRemapper())
+            asmNode.accept(mapper)
             result[clazz.relativePath] = classWriter.toByteArray()
         }
         return result
