@@ -3,6 +3,7 @@ package io.github.xyzboom.ssreducer.bytecode
 import io.github.xyzboom.ssreducer.bytecode.nodes.*
 import org.objectweb.asm.*
 import org.objectweb.asm.commons.ClassRemapper
+import org.objectweb.asm.commons.FieldRemapper
 import org.objectweb.asm.commons.MethodRemapper
 import org.objectweb.asm.commons.Remapper
 import java.nio.file.Path
@@ -112,30 +113,66 @@ class GroupedBytecodeNodes private constructor(
             val superVisitor = super.visitMethod(access, name, descriptor, signature, exceptions) ?: return null
             return MyMethodMapper(superVisitor, remapper)
         }
+
+        override fun visitField(
+            access: Int,
+            name: String?,
+            descriptor: String?,
+            signature: String?,
+            value: Any?
+        ): FieldVisitor? {
+            val fieldNode = DescOnlyBCNode(name ?: return super.visitField(access, name, descriptor, signature, value))
+            if (fieldNode.shouldBeDeleted()) {
+                return null
+            }
+            val superVisitor = super.visitField(access, name, descriptor, signature, value) ?: return null
+            return MyFieldMapper(superVisitor, remapper)
+        }
     }
 
     inner class MyMethodMapper(
         methodVisitor: MethodVisitor,
         remapper: Remapper
     ) : MethodRemapper(methodVisitor, remapper) {
-        fun newObject() {
-            super.visitTypeInsn(Opcodes.NEW, OBJECT_NAME)
-            super.visitInsn(Opcodes.DUP)
-            super.visitMethodInsn(
-                Opcodes.INVOKESPECIAL,
-                OBJECT_NAME,
-                "<init>",
-                "()V",
-                false
-            )
+
+        fun consume(type: Type) {
+            if (type.size == 2) {
+                super.visitInsn(Opcodes.POP2)
+            } else {
+                super.visitInsn(Opcodes.POP)
+            }
         }
 
         fun consumeArgs(descriptor: String) {
             for (type in Type.getArgumentTypes(descriptor)) {
-                if (type.size == 2) {
-                    super.visitInsn(Opcodes.POP2)
-                } else {
-                    super.visitInsn(Opcodes.POP)
+                consume(type)
+            }
+        }
+
+        private fun Type.insertDefaultValue() {
+            when (this.sort) {
+                Type.VOID -> {
+                    // do nothing
+                }
+
+                Type.BOOLEAN, Type.CHAR, Type.BYTE, Type.SHORT, Type.INT -> {
+                    super.visitInsn(Opcodes.ICONST_0)
+                }
+
+                Type.FLOAT -> {
+                    super.visitInsn(Opcodes.FCONST_0)
+                }
+
+                Type.LONG -> {
+                    super.visitInsn(Opcodes.LCONST_0)
+                }
+
+                Type.DOUBLE -> {
+                    super.visitInsn(Opcodes.DCONST_0)
+                }
+
+                else -> {
+                    super.visitInsn(Opcodes.ACONST_NULL)
                 }
             }
         }
@@ -148,65 +185,51 @@ class GroupedBytecodeNodes private constructor(
             isInterface: Boolean
         ) {
             val typeNode = DescOnlyBCNode(owner)
-            if (typeNode.shouldBeDeleted()) {
-                consumeArgs(descriptor)
-                return if (opcodeAndSource != Opcodes.INVOKESPECIAL) {
-                    newObject()
-                } else {
+            val returnType = Type.getReturnType(descriptor).transformed()
+
+            fun insertDefaultValueOfReturnType() {
+                returnType.insertDefaultValue()
+                if (opcodeAndSource == Opcodes.INVOKESPECIAL && name == "<init>") {
                     super.visitMethodInsn(
                         Opcodes.INVOKESPECIAL,
-                        OBJECT_NAME,
-                        "<init>",
-                        "()V",
-                        false
+                        OBJECT_NAME, "<init>", "()V", false
                     )
+                    super.visitInsn(Opcodes.POP)
                 }
+            }
+
+            if (typeNode.shouldBeDeleted()) {
+                consumeArgs(descriptor)
+                return insertDefaultValueOfReturnType()
             }
             val methodNode = DescOnlyBCNode("$owner.$name $descriptor")
             if (methodNode.shouldBeDeleted()) {
                 consumeArgs(descriptor)
-                return if (opcodeAndSource != Opcodes.INVOKESPECIAL) {
-                    val returnType = Type.getReturnType(descriptor).transformed()
-                    when (returnType.sort) {
-                        Type.VOID -> {
-                            // do nothing
-                        }
-                        Type.BOOLEAN, Type.CHAR, Type.BYTE, Type.SHORT, Type.INT -> {
-                            super.visitInsn(Opcodes.ICONST_0)
-                        }
-                        Type.FLOAT -> {
-                            super.visitInsn(Opcodes.FCONST_0)
-                        }
-                        Type.LONG -> {
-                            super.visitInsn(Opcodes.LCONST_0)
-                        }
-                        Type.DOUBLE -> {
-                            super.visitInsn(Opcodes.DCONST_0)
-                        }
-                        else -> {
-                            super.visitInsn(Opcodes.ACONST_NULL)
-                        }
-                    }
-                } else {
-                    super.visitMethodInsn(
-                        Opcodes.INVOKESPECIAL,
-                        OBJECT_NAME,
-                        "<init>",
-                        "()V",
-                        false
-                    )
-                }
+                return insertDefaultValueOfReturnType()
             }
             super.visitMethodInsn(opcodeAndSource, owner, name, descriptor, isInterface)
         }
 
-        override fun visitFieldInsn(opcode: Int, owner: String?, name: String?, descriptor: String?) {
-            val typeNode = DescOnlyBCNode(owner ?: return super.visitFieldInsn(opcode, owner, name, descriptor))
+        override fun visitFieldInsn(opcode: Int, owner: String, name: String, descriptor: String) {
+            val typeNode = DescOnlyBCNode(owner)
+            val oriFieldType = Type.getType(descriptor)
+            val fieldType = oriFieldType.transformed()
             if (typeNode.shouldBeDeleted()) {
-                return newObject()
+                return if (opcode == Opcodes.PUTFIELD || opcode == Opcodes.PUTSTATIC) {
+                    consume(oriFieldType)
+                } else {
+                    return fieldType.insertDefaultValue()
+                }
             }
             super.visitFieldInsn(opcode, owner, name, descriptor)
         }
+    }
+
+    class MyFieldMapper(
+        fieldVisitor: FieldVisitor,
+        remapper: Remapper
+    ) : FieldRemapper(Opcodes.ASM9, fieldVisitor, remapper) {
+
     }
 
     /**
