@@ -2,6 +2,7 @@ package io.github.xyzboom.ssreducer.bytecode
 
 import io.github.xyzboom.ssreducer.bytecode.nodes.*
 import org.objectweb.asm.*
+import org.objectweb.asm.commons.AnalyzerAdapter
 import org.objectweb.asm.commons.ClassRemapper
 import org.objectweb.asm.commons.FieldRemapper
 import org.objectweb.asm.commons.MethodRemapper
@@ -101,7 +102,7 @@ class GroupedBytecodeNodes private constructor(
 
         override fun visitMethod(
             access: Int,
-            name: String?,
+            name: String,
             descriptor: String,
             signature: String?,
             exceptions: Array<out String?>?
@@ -111,7 +112,7 @@ class GroupedBytecodeNodes private constructor(
                 return null
             }
             val superVisitor = super.visitMethod(access, name, descriptor, signature, exceptions) ?: return null
-            return MyMethodMapper(superVisitor, remapper)
+            return MyMethodMapper(superVisitor, remapper, className, access, name, descriptor)
         }
 
         override fun visitField(
@@ -132,8 +133,11 @@ class GroupedBytecodeNodes private constructor(
 
     inner class MyMethodMapper(
         methodVisitor: MethodVisitor,
-        remapper: Remapper
-    ) : MethodRemapper(methodVisitor, remapper) {
+        remapper: Remapper,
+        owner: String, access: Int, name: String, descriptor: String
+    ) : MethodRemapper(AnalyzerAdapter(owner, access, name, descriptor, methodVisitor), remapper) {
+
+        private val analyzer get() = mv as AnalyzerAdapter
 
         fun consume(type: Type) {
             if (type.size == 2) {
@@ -188,14 +192,19 @@ class GroupedBytecodeNodes private constructor(
             val returnType = Type.getReturnType(descriptor).transformed()
 
             fun insertDefaultValueOfReturnType() {
-                returnType.insertDefaultValue()
                 if (opcodeAndSource == Opcodes.INVOKESPECIAL && name == "<init>") {
                     super.visitMethodInsn(
                         Opcodes.INVOKESPECIAL,
                         OBJECT_NAME, "<init>", "()V", false
                     )
-                    super.visitInsn(Opcodes.POP)
+                    // this means we have NEW and DUP before
+                    // we need to pop the newly create object
+                    if (analyzer.stack.size >= 2) {
+                        super.visitInsn(Opcodes.POP)
+                        super.visitInsn(Opcodes.ACONST_NULL)
+                    }
                 }
+                returnType.insertDefaultValue()
             }
 
             if (typeNode.shouldBeDeleted()) {
@@ -232,6 +241,52 @@ class GroupedBytecodeNodes private constructor(
 
     }
 
+    inner class MakeCorrectTypeClassVisitor(
+        classVisitor: ClassVisitor
+    ) : ClassVisitor(Opcodes.ASM9, classVisitor) {
+        lateinit var className: String
+        override fun visit(
+            version: Int,
+            access: Int,
+            name: String,
+            signature: String?,
+            superName: String?,
+            interfaces: Array<out String?>?
+        ) {
+            super.visit(version, access, name, signature, superName, interfaces)
+            className = name
+        }
+        override fun visitMethod(
+            access: Int,
+            name: String,
+            descriptor: String,
+            signature: String?,
+            exceptions: Array<out String?>?
+        ): MethodVisitor? {
+            val superVisitor = super.visitMethod(access, name, descriptor, signature, exceptions) ?: return null
+            return MakeCorrectTypeMethodVisitor(superVisitor, className, access, name, descriptor)
+        }
+    }
+
+    inner class MakeCorrectTypeMethodVisitor(
+        methodVisitor: MethodVisitor,
+        owner: String, access: Int, name: String?, descriptor: String?
+    ) : MethodVisitor(Opcodes.ASM9, AnalyzerAdapter(owner, access, name, descriptor, methodVisitor)) {
+
+        private val analyzer get() = mv as AnalyzerAdapter
+
+        override fun visitMethodInsn(
+            opcodeAndSource: Int,
+            owner: String,
+            name: String,
+            descriptor: String,
+            isInterface: Boolean
+        ) {
+            super.visitMethodInsn(opcodeAndSource, owner, name, descriptor, isInterface)
+        }
+    }
+
+
     /**
      * Dependencies are reconstructed during generate new content.
      */
@@ -244,7 +299,11 @@ class GroupedBytecodeNodes private constructor(
             val classWriter = ClassWriter(ClassWriter.COMPUTE_MAXS)
             val mapper = MyClassRemapper(classWriter, MyRemapper())
             asmNode.accept(mapper)
-            result[clazz.relativePath] = classWriter.toByteArray()
+            val makeTypeCorrectWriter = ClassWriter(ClassWriter.COMPUTE_MAXS)
+            val firstStageResult = classWriter.toByteArray()
+            val reader = ClassReader(firstStageResult)
+            reader.accept(MakeCorrectTypeClassVisitor(makeTypeCorrectWriter), ClassReader.EXPAND_FRAMES)
+            result[clazz.relativePath] = makeTypeCorrectWriter.toByteArray()
         }
         return result
     }
