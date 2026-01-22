@@ -241,52 +241,6 @@ class GroupedBytecodeNodes private constructor(
 
     }
 
-    inner class MakeCorrectTypeClassVisitor(
-        classVisitor: ClassVisitor
-    ) : ClassVisitor(Opcodes.ASM9, classVisitor) {
-        lateinit var className: String
-        override fun visit(
-            version: Int,
-            access: Int,
-            name: String,
-            signature: String?,
-            superName: String?,
-            interfaces: Array<out String?>?
-        ) {
-            super.visit(version, access, name, signature, superName, interfaces)
-            className = name
-        }
-        override fun visitMethod(
-            access: Int,
-            name: String,
-            descriptor: String,
-            signature: String?,
-            exceptions: Array<out String?>?
-        ): MethodVisitor? {
-            val superVisitor = super.visitMethod(access, name, descriptor, signature, exceptions) ?: return null
-            return MakeCorrectTypeMethodVisitor(superVisitor, className, access, name, descriptor)
-        }
-    }
-
-    inner class MakeCorrectTypeMethodVisitor(
-        methodVisitor: MethodVisitor,
-        owner: String, access: Int, name: String?, descriptor: String?
-    ) : MethodVisitor(Opcodes.ASM9, AnalyzerAdapter(owner, access, name, descriptor, methodVisitor)) {
-
-        private val analyzer get() = mv as AnalyzerAdapter
-
-        override fun visitMethodInsn(
-            opcodeAndSource: Int,
-            owner: String,
-            name: String,
-            descriptor: String,
-            isInterface: Boolean
-        ) {
-            super.visitMethodInsn(opcodeAndSource, owner, name, descriptor, isInterface)
-        }
-    }
-
-
     /**
      * Dependencies are reconstructed during generate new content.
      */
@@ -299,11 +253,7 @@ class GroupedBytecodeNodes private constructor(
             val classWriter = ClassWriter(ClassWriter.COMPUTE_MAXS)
             val mapper = MyClassRemapper(classWriter, MyRemapper())
             asmNode.accept(mapper)
-            val makeTypeCorrectWriter = ClassWriter(ClassWriter.COMPUTE_MAXS)
-            val firstStageResult = classWriter.toByteArray()
-            val reader = ClassReader(firstStageResult)
-            reader.accept(MakeCorrectTypeClassVisitor(makeTypeCorrectWriter), ClassReader.EXPAND_FRAMES)
-            result[clazz.relativePath] = makeTypeCorrectWriter.toByteArray()
+            result[clazz.relativePath] = classWriter.toByteArray()
         }
         return result
     }
