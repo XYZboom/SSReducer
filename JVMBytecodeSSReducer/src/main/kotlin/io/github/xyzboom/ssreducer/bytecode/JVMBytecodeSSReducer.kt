@@ -37,7 +37,7 @@ class JVMBytecodeSSReducer : CommonReducer(workingDir), IReducer {
                         val remainGroup = currentGroup.copyOf(nodesNow)
                         val fileContents = remainGroup.fileContents().asSavable()
                         val predictResult = predict(fileContents)
-                        return@DDMin predictResult to (currentGroup to currentContent)
+                        return@DDMin predictResult to (remainGroup to fileContents)
                     }
                 val onSuccess: (List<BytecodeNode>, Pair<GroupedBytecodeNodes, Map<String, ISavable>>) -> Unit =
                     onSuccess@ { _, (remainGroup, fileContents) ->

@@ -6,5 +6,5 @@ class MethodBCNode(
     override val asmNode: MethodNode,
     parent: BytecodeNode? = null
 ) : BytecodeNode(asmNode, parent) {
-    override val name: String = asmNode.name
+    override val name: String = asmNode.name + " " + asmNode.desc
 }

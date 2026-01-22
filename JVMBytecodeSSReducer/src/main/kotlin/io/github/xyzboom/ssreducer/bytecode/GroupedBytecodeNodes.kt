@@ -21,6 +21,7 @@ class GroupedBytecodeNodes private constructor(
     companion object {
 
         private const val OBJECT_NAME = "java/lang/Object"
+        private val objectType = Type.getObjectType(OBJECT_NAME)
 
         fun groupNodes(sourceFiles: List<Path>, relativeTo: Path): GroupedBytecodeNodes {
             val classNodes = sourceFiles.map {
@@ -56,20 +57,21 @@ class GroupedBytecodeNodes private constructor(
         return this
     }
 
-    fun BytecodeNode.shouldBeDeleted(): Boolean {
-        return this in oriNodes && this !in nodes
+    fun Type.shouldBeDeleted(): Boolean {
+        val typeNode = DescOnlyBCNode(this.internalName ?: return false)
+        return typeNode.shouldBeDeleted()
     }
 
-    fun MethodVisitor.newObject() {
-        visitTypeInsn(Opcodes.NEW, OBJECT_NAME)
-        visitInsn(Opcodes.DUP)
-        visitMethodInsn(
-            Opcodes.INVOKESPECIAL,
-            OBJECT_NAME,
-            "<init>",
-            "()V",
-            false
-        )
+    fun Type.transformed(): Type {
+        return if (shouldBeDeleted()) {
+            objectType
+        } else {
+            this
+        }
+    }
+
+    fun BytecodeNode.shouldBeDeleted(): Boolean {
+        return this in oriNodes && this !in nodes
     }
 
     inner class MyRemapper : Remapper(Opcodes.ASM9) {
@@ -99,18 +101,45 @@ class GroupedBytecodeNodes private constructor(
         override fun visitMethod(
             access: Int,
             name: String?,
-            descriptor: String?,
+            descriptor: String,
             signature: String?,
             exceptions: Array<out String?>?
         ): MethodVisitor? {
+            val methodNode = DescOnlyBCNode("$className.$name $descriptor")
+            if (methodNode.shouldBeDeleted()) {
+                return null
+            }
             val superVisitor = super.visitMethod(access, name, descriptor, signature, exceptions) ?: return null
             return MyMethodMapper(superVisitor, remapper)
         }
     }
 
     inner class MyMethodMapper(
-        methodVisitor: MethodVisitor, remapper: Remapper
+        methodVisitor: MethodVisitor,
+        remapper: Remapper
     ) : MethodRemapper(methodVisitor, remapper) {
+        fun newObject() {
+            super.visitTypeInsn(Opcodes.NEW, OBJECT_NAME)
+            super.visitInsn(Opcodes.DUP)
+            super.visitMethodInsn(
+                Opcodes.INVOKESPECIAL,
+                OBJECT_NAME,
+                "<init>",
+                "()V",
+                false
+            )
+        }
+
+        fun consumeArgs(descriptor: String) {
+            for (type in Type.getArgumentTypes(descriptor)) {
+                if (type.size == 2) {
+                    super.visitInsn(Opcodes.POP2)
+                } else {
+                    super.visitInsn(Opcodes.POP)
+                }
+            }
+        }
+
         override fun visitMethodInsn(
             opcodeAndSource: Int,
             owner: String,
@@ -120,19 +149,46 @@ class GroupedBytecodeNodes private constructor(
         ) {
             val typeNode = DescOnlyBCNode(owner)
             if (typeNode.shouldBeDeleted()) {
+                consumeArgs(descriptor)
                 return if (opcodeAndSource != Opcodes.INVOKESPECIAL) {
                     newObject()
                 } else {
-                    for (type in Type.getArgumentTypes(descriptor)) {
-                        // todo when stack top is array[0]
-                        // decompiler may generate: array[0]; which is not a legal java statement.
-                        if (type == Type.LONG_TYPE || type == Type.DOUBLE_TYPE) {
-                            super.visitInsn(Opcodes.POP2)
-                        } else {
-                            super.visitInsn(Opcodes.POP)
+                    super.visitMethodInsn(
+                        Opcodes.INVOKESPECIAL,
+                        OBJECT_NAME,
+                        "<init>",
+                        "()V",
+                        false
+                    )
+                }
+            }
+            val methodNode = DescOnlyBCNode("$owner.$name $descriptor")
+            if (methodNode.shouldBeDeleted()) {
+                consumeArgs(descriptor)
+                return if (opcodeAndSource != Opcodes.INVOKESPECIAL) {
+                    val returnType = Type.getReturnType(descriptor).transformed()
+                    when (returnType.sort) {
+                        Type.VOID -> {
+                            // do nothing
+                        }
+                        Type.BOOLEAN, Type.CHAR, Type.BYTE, Type.SHORT, Type.INT -> {
+                            super.visitInsn(Opcodes.ICONST_0)
+                        }
+                        Type.FLOAT -> {
+                            super.visitInsn(Opcodes.FCONST_0)
+                        }
+                        Type.LONG -> {
+                            super.visitInsn(Opcodes.LCONST_0)
+                        }
+                        Type.DOUBLE -> {
+                            super.visitInsn(Opcodes.DCONST_0)
+                        }
+                        else -> {
+                            super.visitInsn(Opcodes.ACONST_NULL)
                         }
                     }
-                    visitMethodInsn(
+                } else {
+                    super.visitMethodInsn(
                         Opcodes.INVOKESPECIAL,
                         OBJECT_NAME,
                         "<init>",
@@ -171,6 +227,6 @@ class GroupedBytecodeNodes private constructor(
     }
 
     fun copyOf(nodesNow: Map<BytecodeNode, Int>): GroupedBytecodeNodes {
-        return GroupedBytecodeNodes(nodesNow.toMutableMap(), oriNodes)
+        return GroupedBytecodeNodes(HashMap(nodesNow), HashSet(oriNodes))
     }
 }
