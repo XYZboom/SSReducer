@@ -7,6 +7,7 @@ import org.objectweb.asm.commons.ClassRemapper
 import org.objectweb.asm.commons.FieldRemapper
 import org.objectweb.asm.commons.MethodRemapper
 import org.objectweb.asm.commons.Remapper
+import org.objectweb.asm.tree.ClassNode
 import java.nio.file.Path
 import kotlin.io.path.absolute
 import kotlin.io.path.pathString
@@ -31,28 +32,74 @@ class GroupedBytecodeNodes private constructor(
                 classNode to it.absolute()
             }
             val nodes = mutableMapOf<BytecodeNode, Int>()
-            for ((clazz, path) in classNodes) {
-                val classBCNode = ClassBCNode(clazz, path.relativeTo(relativeTo).pathString)
-                nodes[classBCNode] = 1
+            val recordedClasses = mutableMapOf<String, Pair<ClassNode, Path>>()
+            val innerClasses = mutableListOf<Pair<ClassNode, Path>>()
+
+            fun addClass(clazz: ClassNode, path: Path, level: Int, parent: BytecodeNode? = null) {
+                val classBCNode = ClassBCNode(clazz, path.relativeTo(relativeTo).pathString, parent)
+                nodes[classBCNode] = level
                 for (method in clazz.methods) {
                     val methodBCNode = MethodBCNode(method, classBCNode)
-                    nodes[methodBCNode] = 2
+                    nodes[methodBCNode] = level + 1
                     // todo reduce instructions
                 }
                 for (field in clazz.fields) {
                     val fieldNode = FieldBCNode(field, classBCNode)
-                    nodes[fieldNode] = 2
+                    nodes[fieldNode] = level + 1
+                }
+            }
+
+            for (pair in classNodes) {
+                val (clazz, path) = pair
+                recordedClasses[clazz.name] = pair
+                if (clazz.outerClass != null) {
+                    innerClasses.add(pair)
+                    continue
+                }
+                addClass(clazz, path, 1)
+            }
+            while (innerClasses.isNotEmpty()) {
+                val iterator = innerClasses.iterator()
+                while (iterator.hasNext()) {
+                    val (clazz, path) = iterator.next()
+                    val outerName = clazz.outerClass!!
+                    val outerPair = nodes.entries.find { (key, _) ->
+                        key.name == outerName
+                    }
+                    if (outerPair == null) {
+                        if (outerName in recordedClasses) {
+                            // the outer class is also an inner class
+                            continue
+                        }
+                        addClass(clazz, path, 1)
+                        iterator.remove()
+                        continue
+                    }
+                    val (outerNode, outerLevel) = outerPair
+                    addClass(clazz, path, outerLevel + 1, outerNode)
+                    iterator.remove()
                 }
             }
             return GroupedBytecodeNodes(nodes, HashSet(nodes.keys))
         }
     }
 
-    fun applyEdit(): GroupedBytecodeNodes {
+    fun BytecodeNode.anyParentWasDeleted(): Boolean {
+        var parent = this.parent
+        while (parent != null) {
+            if (parent !in nodes) {
+                return true
+            }
+            parent = parent.parent
+        }
+        return false
+    }
+
+    fun removeUselessNodes(): GroupedBytecodeNodes {
         val iterator = nodes.iterator()
         while (iterator.hasNext()) {
             val (node, _) = iterator.next()
-            if (node.parent != null && node.parent !in nodes) {
+            if (node.anyParentWasDeleted()) {
                 iterator.remove()
             }
         }
@@ -74,6 +121,15 @@ class GroupedBytecodeNodes private constructor(
 
     fun BytecodeNode.shouldBeDeleted(): Boolean {
         return this in oriNodes && this !in nodes
+    }
+
+    fun String.arrayElementShouldBeDeleted(): Boolean {
+        var type = Type.getType(this)
+        if (type.sort == Type.ARRAY) return false
+        while (type.sort != Type.ARRAY) {
+            type = type.elementType
+        }
+        return type.shouldBeDeleted()
     }
 
     inner class MyRemapper : Remapper(Opcodes.ASM9) {
@@ -117,12 +173,12 @@ class GroupedBytecodeNodes private constructor(
 
         override fun visitField(
             access: Int,
-            name: String?,
+            name: String,
             descriptor: String?,
             signature: String?,
             value: Any?
         ): FieldVisitor? {
-            val fieldNode = DescOnlyBCNode(name ?: return super.visitField(access, name, descriptor, signature, value))
+            val fieldNode = DescOnlyBCNode("$className.$name $descriptor")
             if (fieldNode.shouldBeDeleted()) {
                 return null
             }
@@ -138,6 +194,7 @@ class GroupedBytecodeNodes private constructor(
     ) : MethodRemapper(AnalyzerAdapter(owner, access, name, descriptor, methodVisitor), remapper) {
 
         private val analyzer get() = mv as AnalyzerAdapter
+        private val newTypes = mutableMapOf<Label, String>()
 
         fun consume(type: Type) {
             if (type.size == 2) {
@@ -150,6 +207,25 @@ class GroupedBytecodeNodes private constructor(
         fun consumeArgs(descriptor: String) {
             for (type in Type.getArgumentTypes(descriptor)) {
                 consume(type)
+            }
+        }
+
+        private fun Type.insertArrayOf() {
+            super.visitInsn(Opcodes.ICONST_0)
+            when (this.sort) {
+                Type.VOID -> {
+                    // do nothing
+                }
+
+                Type.BOOLEAN -> super.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_BOOLEAN)
+                Type.CHAR -> super.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_CHAR)
+                Type.BYTE -> super.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_BYTE)
+                Type.SHORT -> super.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_SHORT)
+                Type.INT -> super.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_INT)
+                Type.FLOAT -> super.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_FLOAT)
+                Type.LONG -> super.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_LONG)
+                Type.DOUBLE -> super.visitIntInsn(Opcodes.NEWARRAY, Opcodes.T_DOUBLE)
+                else -> super.visitTypeInsn(Opcodes.ANEWARRAY, this.internalName)
             }
         }
 
@@ -175,6 +251,14 @@ class GroupedBytecodeNodes private constructor(
                     super.visitInsn(Opcodes.DCONST_0)
                 }
 
+                Type.OBJECT -> {
+                    super.visitInsn(Opcodes.ACONST_NULL)
+                }
+
+                Type.ARRAY -> {
+                    elementType.insertArrayOf()
+                }
+
                 else -> {
                     super.visitInsn(Opcodes.ACONST_NULL)
                 }
@@ -191,46 +275,65 @@ class GroupedBytecodeNodes private constructor(
             val typeNode = DescOnlyBCNode(owner)
             val returnType = Type.getReturnType(descriptor).transformed()
 
-            fun insertDefaultValueOfReturnType() {
-                if (opcodeAndSource == Opcodes.INVOKESPECIAL && name == "<init>") {
-                    super.visitMethodInsn(
-                        Opcodes.INVOKESPECIAL,
-                        OBJECT_NAME, "<init>", "()V", false
-                    )
-                    // this means we have NEW and DUP before
-                    // we need to pop the newly create object
-                    if (analyzer.stack.size >= 2) {
+            fun handleDelete() {
+                consumeArgs(descriptor)
+                if (opcodeAndSource == Opcodes.INVOKEVIRTUAL || opcodeAndSource == Opcodes.INVOKEINTERFACE) {
+                    super.visitInsn(Opcodes.POP)
+                }
+                if (opcodeAndSource == Opcodes.INVOKESPECIAL) {
+                    if (name == "<init>") {
+                        val top = analyzer.stack.lastOrNull()
+                        val newType = (top as? Label)?.let { newTypes[it] }
+                        if (newType != null) {
+                            super.visitMethodInsn(
+                                Opcodes.INVOKESPECIAL,
+                                newType, "<init>", "()V", false
+                            )
+                        } else {
+                            super.visitMethodInsn(
+                                Opcodes.INVOKESPECIAL,
+                                OBJECT_NAME, "<init>", "()V", false
+                            )
+                        }
+                    } else {
                         super.visitInsn(Opcodes.POP)
-                        super.visitInsn(Opcodes.ACONST_NULL)
                     }
                 }
                 returnType.insertDefaultValue()
             }
 
-            if (typeNode.shouldBeDeleted()) {
-                consumeArgs(descriptor)
-                return insertDefaultValueOfReturnType()
-            }
             val methodNode = DescOnlyBCNode("$owner.$name $descriptor")
-            if (methodNode.shouldBeDeleted()) {
-                consumeArgs(descriptor)
-                return insertDefaultValueOfReturnType()
+            if (typeNode.shouldBeDeleted() || methodNode.shouldBeDeleted()) {
+                return handleDelete()
             }
             super.visitMethodInsn(opcodeAndSource, owner, name, descriptor, isInterface)
         }
 
         override fun visitFieldInsn(opcode: Int, owner: String, name: String, descriptor: String) {
+            val fieldNode = DescOnlyBCNode("$owner.$name $descriptor")
             val typeNode = DescOnlyBCNode(owner)
             val oriFieldType = Type.getType(descriptor)
             val fieldType = oriFieldType.transformed()
-            if (typeNode.shouldBeDeleted()) {
+            if (typeNode.shouldBeDeleted() || fieldNode.shouldBeDeleted()) {
+                if (opcode == Opcodes.GETFIELD || opcode == Opcodes.PUTFIELD) {
+                    super.visitInsn(Opcodes.POP)
+                }
                 return if (opcode == Opcodes.PUTFIELD || opcode == Opcodes.PUTSTATIC) {
                     consume(oriFieldType)
                 } else {
-                    return fieldType.insertDefaultValue()
+                    fieldType.insertDefaultValue()
                 }
             }
             super.visitFieldInsn(opcode, owner, name, descriptor)
+        }
+
+        override fun visitTypeInsn(opcode: Int, type: String) {
+            super.visitTypeInsn(opcode, type)
+            val transformed = Type.getObjectType(type).transformed().internalName
+            if (opcode == Opcodes.NEW) {
+                val label = analyzer.stack.last() as Label
+                newTypes[label] = transformed
+            }
         }
     }
 
@@ -259,6 +362,6 @@ class GroupedBytecodeNodes private constructor(
     }
 
     fun copyOf(nodesNow: Map<BytecodeNode, Int>): GroupedBytecodeNodes {
-        return GroupedBytecodeNodes(HashMap(nodesNow), HashSet(oriNodes))
+        return GroupedBytecodeNodes(HashMap(nodesNow), HashSet(oriNodes)).removeUselessNodes()
     }
 }

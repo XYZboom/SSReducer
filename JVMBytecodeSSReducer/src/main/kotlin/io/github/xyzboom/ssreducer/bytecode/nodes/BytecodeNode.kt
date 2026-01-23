@@ -1,16 +1,11 @@
 package io.github.xyzboom.ssreducer.bytecode.nodes
 
-import org.objectweb.asm.tree.AbstractInsnNode
-import org.objectweb.asm.tree.ClassNode
-import org.objectweb.asm.tree.FieldNode
-import org.objectweb.asm.tree.MethodNode
-
 sealed class BytecodeNode protected constructor(
     open val asmNode: Any,
     val parent: BytecodeNode? = null
 ) {
     abstract val name: String
-    val qualifiedName: String
+    open val qualifiedName: String
         get() = if (parent != null) {
             "${parent.qualifiedName}.$name"
         } else {

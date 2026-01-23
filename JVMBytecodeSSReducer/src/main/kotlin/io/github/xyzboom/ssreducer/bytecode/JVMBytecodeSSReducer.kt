@@ -41,7 +41,7 @@ class JVMBytecodeSSReducer : CommonReducer(workingDir), IReducer {
                     }
                 val onSuccess: (List<BytecodeNode>, Pair<GroupedBytecodeNodes, Map<String, ISavable>>) -> Unit =
                     onSuccess@ { _, (remainGroup, fileContents) ->
-                        currentGroup = remainGroup.applyEdit()
+                        currentGroup = remainGroup
                         currentContent = fileContents
                     }
                 val ddmin = if (jobs == 1) {

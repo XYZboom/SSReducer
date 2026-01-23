@@ -9,4 +9,9 @@ class ClassBCNode(
 ) : BytecodeNode(asmNode, parent) {
     override val name: String = asmNode.name
 
+    /**
+     * The qualified name of the class is its internal name, not outer name + inner name.
+     */
+    override val qualifiedName: String
+        get() = name
 }
