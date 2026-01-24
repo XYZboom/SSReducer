@@ -8,6 +8,7 @@ import org.objectweb.asm.commons.FieldRemapper
 import org.objectweb.asm.commons.MethodRemapper
 import org.objectweb.asm.commons.Remapper
 import org.objectweb.asm.tree.ClassNode
+import org.objectweb.asm.util.CheckClassAdapter
 import java.nio.file.Path
 import kotlin.io.path.absolute
 import kotlin.io.path.pathString
@@ -123,15 +124,6 @@ class GroupedBytecodeNodes private constructor(
         return this in oriNodes && this !in nodes
     }
 
-    fun String.arrayElementShouldBeDeleted(): Boolean {
-        var type = Type.getType(this)
-        if (type.sort == Type.ARRAY) return false
-        while (type.sort != Type.ARRAY) {
-            type = type.elementType
-        }
-        return type.shouldBeDeleted()
-    }
-
     inner class MyRemapper : Remapper(Opcodes.ASM9) {
         override fun map(internalName: String?): String? {
             internalName ?: return null
@@ -205,7 +197,8 @@ class GroupedBytecodeNodes private constructor(
         }
 
         fun consumeArgs(descriptor: String) {
-            for (type in Type.getArgumentTypes(descriptor)) {
+            // the top of the stack is the last argument
+            for (type in Type.getArgumentTypes(descriptor).reversed()) {
                 consume(type)
             }
         }
@@ -347,7 +340,7 @@ class GroupedBytecodeNodes private constructor(
     /**
      * Dependencies are reconstructed during generate new content.
      */
-    fun fileContents(): Map<String, ByteArray> {
+    fun fileContents(verify: Boolean): Map<String, ByteArray> {
         @Suppress("UNCHECKED_CAST") // Safe cast, we checked the type in filter
         val classes = nodes.filter { it.key is ClassBCNode }.keys as Set<ClassBCNode>
         val result = mutableMapOf<String, ByteArray>()
@@ -356,7 +349,13 @@ class GroupedBytecodeNodes private constructor(
             val classWriter = ClassWriter(ClassWriter.COMPUTE_MAXS)
             val mapper = MyClassRemapper(classWriter, MyRemapper())
             asmNode.accept(mapper)
-            result[clazz.relativePath] = classWriter.toByteArray()
+            val resultBytes = classWriter.toByteArray()
+            if (verify) {
+                val reader = ClassReader(resultBytes)
+                val checker = CheckClassAdapter(null, true)
+                reader.accept(checker, ClassReader.EXPAND_FRAMES)
+            }
+            result[clazz.relativePath] = resultBytes
         }
         return result
     }

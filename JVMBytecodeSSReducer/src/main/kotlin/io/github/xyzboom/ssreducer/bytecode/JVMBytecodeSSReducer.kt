@@ -1,6 +1,11 @@
 package io.github.xyzboom.ssreducer.bytecode
 
 import com.github.ajalt.clikt.core.main
+import com.github.ajalt.clikt.parameters.options.OptionWithValues
+import com.github.ajalt.clikt.parameters.options.default
+import com.github.ajalt.clikt.parameters.options.help
+import com.github.ajalt.clikt.parameters.options.option
+import com.github.ajalt.clikt.parameters.types.boolean
 import io.github.xyzboom.ssreducer.CommonReducer
 import io.github.xyzboom.ssreducer.IReducer
 import io.github.xyzboom.ssreducer.ISavable
@@ -14,6 +19,15 @@ import kotlin.io.path.Path
 import kotlin.io.path.extension
 
 class JVMBytecodeSSReducer : CommonReducer(workingDir), IReducer {
+
+    private val verifyBytecode by run<OptionWithValues<Boolean, Boolean, Boolean>> {
+        option("--verify-bytecode")
+            .boolean()
+            .default(true)
+            .help {
+                "Verify bytecode correctness after reduction"
+            }
+    }
 
     @OptIn(ExperimentalAtomicApi::class)
     override fun run() {
@@ -35,7 +49,7 @@ class JVMBytecodeSSReducer : CommonReducer(workingDir), IReducer {
                     DDMin@{ remainNodes ->
                         val nodesNow = notCurrenNodes + remainNodes.associateWith { currentLevel }
                         val remainGroup = currentGroup.copyOf(nodesNow)
-                        val fileContents = remainGroup.fileContents().asSavable()
+                        val fileContents = remainGroup.fileContents(verifyBytecode).asSavable()
                         val predictResult = predict(fileContents)
                         return@DDMin predictResult to (remainGroup to fileContents)
                     }
