@@ -17,6 +17,7 @@ dependencies {
     compileOnly("com.jetbrains.intellij.platform:project-model-impl:$aaIntellijVersion")
     api("com.github.ajalt.clikt:clikt:5.0.3")
     implementation("io.github.oshai:kotlin-logging-jvm:7.0.13")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
 
     testImplementation(platform("org.junit:junit-bom:5.10.0"))
     testImplementation("org.junit.jupiter:junit-jupiter")

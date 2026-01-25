@@ -6,6 +6,9 @@ import com.github.ajalt.clikt.parameters.types.boolean
 import com.github.ajalt.clikt.parameters.types.file
 import com.github.ajalt.clikt.parameters.types.int
 import com.github.ajalt.clikt.parameters.types.long
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
@@ -119,7 +122,6 @@ abstract class CommonReducer(
             return fileContentsCacheResult.first
         }
         val tempDir: Path = Files.createTempDirectory(reducerName)
-        tempDir.toFile().deleteOnExit()
         val tempScript = preparePredictFiles(fileContents, tempDir)
         val predictTimeNow = predictTimes.incrementAndFetch()
         println("predict $predictTimeNow at temp dir: $tempDir")
@@ -155,6 +157,9 @@ abstract class CommonReducer(
         if (saveTemps) {
             saveResult(fileContents, File(targetDir, "${predictTimeNow}_${predictResult}_${predictExit}"))
         }
+        CoroutineScope(Dispatchers.IO).launch {
+            tempDir.toFile().deleteRecursively()
+        }
         return predictResult
     }
 
@@ -179,7 +184,6 @@ abstract class CommonReducer(
         }
         val scriptRelativePath = predictScript.absolutePath.removePrefix(workingDir).removePrefix("/")
         val tempScript = tempDir.resolve(scriptRelativePath).toFile()
-        tempScript.deleteOnExit()
         predictScript.copyTo(tempScript)
         tempScript.setExecutable(true)
         tempScript.setReadable(true)

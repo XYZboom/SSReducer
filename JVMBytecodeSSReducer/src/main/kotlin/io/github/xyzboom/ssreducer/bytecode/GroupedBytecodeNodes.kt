@@ -35,6 +35,7 @@ class GroupedBytecodeNodes private constructor(
             val nodes = mutableMapOf<BytecodeNode, Int>()
             val recordedClasses = mutableMapOf<String, Pair<ClassNode, Path>>()
             val innerClasses = mutableListOf<Pair<ClassNode, Path>>()
+            val inner2Outer = mutableMapOf<String, String>()
 
             fun addClass(clazz: ClassNode, path: Path, level: Int, parent: BytecodeNode? = null) {
                 val classBCNode = ClassBCNode(clazz, path.relativeTo(relativeTo).pathString, parent)
@@ -50,10 +51,27 @@ class GroupedBytecodeNodes private constructor(
                 }
             }
 
+            for ((clazz, _) in classNodes) {
+                for (innerClazz in clazz.innerClasses) {
+                    // for somehow, we can find the inner class is the same as outer class,
+                    // maybe a compiler bug? or something else? to be investigated.
+                    val innerName: String? = innerClazz.name
+                    val outerName = clazz.name!!
+                    if (innerName == clazz.name) {
+                        continue
+                    }
+
+                    if (innerName == null) continue
+                    if (innerName.startsWith(outerName)) {
+                        inner2Outer[innerName] = outerName
+                    }
+                }
+            }
+
             for (pair in classNodes) {
                 val (clazz, path) = pair
                 recordedClasses[clazz.name] = pair
-                if (clazz.outerClass != null) {
+                if (inner2Outer[clazz.name] != null) {
                     innerClasses.add(pair)
                     continue
                 }
@@ -63,7 +81,7 @@ class GroupedBytecodeNodes private constructor(
                 val iterator = innerClasses.iterator()
                 while (iterator.hasNext()) {
                     val (clazz, path) = iterator.next()
-                    val outerName = clazz.outerClass!!
+                    val outerName = inner2Outer[clazz.name]
                     val outerPair = nodes.entries.find { (key, _) ->
                         key.name == outerName
                     }
@@ -308,13 +326,17 @@ class GroupedBytecodeNodes private constructor(
             val oriFieldType = Type.getType(descriptor)
             val fieldType = oriFieldType.transformed()
             if (typeNode.shouldBeDeleted() || fieldNode.shouldBeDeleted()) {
-                if (opcode == Opcodes.GETFIELD || opcode == Opcodes.PUTFIELD) {
+                if (opcode == Opcodes.GETFIELD) {
                     super.visitInsn(Opcodes.POP)
                 }
-                return if (opcode == Opcodes.PUTFIELD || opcode == Opcodes.PUTSTATIC) {
+                if (opcode == Opcodes.PUTFIELD || opcode == Opcodes.PUTSTATIC) {
                     consume(oriFieldType)
+                    if (opcode == Opcodes.PUTFIELD) {
+                        super.visitInsn(Opcodes.POP)
+                    }
+                    return
                 } else {
-                    fieldType.insertDefaultValue()
+                    return fieldType.insertDefaultValue()
                 }
             }
             super.visitFieldInsn(opcode, owner, name, descriptor)
@@ -353,7 +375,12 @@ class GroupedBytecodeNodes private constructor(
             if (verify) {
                 val reader = ClassReader(resultBytes)
                 val checker = CheckClassAdapter(null, true)
-                reader.accept(checker, ClassReader.EXPAND_FRAMES)
+                try {
+                    reader.accept(checker, ClassReader.EXPAND_FRAMES)
+                } catch (e: Exception) {
+                    System.err.println("Verify failed for class ${clazz.name}")
+                    throw e
+                }
             }
             result[clazz.relativePath] = resultBytes
         }
