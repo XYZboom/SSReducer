@@ -207,11 +207,36 @@ class GroupedBytecodeNodes private constructor(
         private val newTypes = mutableMapOf<Label, String>()
 
         fun consume(type: Type) {
+            super.visitFieldInsn(
+                Opcodes.GETSTATIC,
+                Type.getInternalName(System::class.java),
+                System::out.name,
+                Type.getDescriptor(System.out.javaClass)
+            )
             if (type.size == 2) {
-                super.visitInsn(Opcodes.POP2)
-            } else {
+                super.visitInsn(Opcodes.DUP_X2)
                 super.visitInsn(Opcodes.POP)
+            } else {
+                super.visitInsn(Opcodes.SWAP)
             }
+            val desc = when (type.sort) {
+                Type.BOOLEAN -> "(Z)V"
+                Type.CHAR -> "(C)V"
+                Type.BYTE -> "(B)V"
+                Type.SHORT -> "(S)V"
+                Type.INT -> "(I)V"
+                Type.FLOAT -> "(F)V"
+                Type.LONG -> "(J)V"
+                Type.DOUBLE -> "(D)V"
+                else -> "(${Type.getDescriptor(Object::class.java)})V"
+            }
+            super.visitMethodInsn(
+                Opcodes.INVOKEVIRTUAL,
+                Type.getInternalName(System.out.javaClass),
+                "println",
+                desc,
+                false
+            )
         }
 
         fun consumeArgs(descriptor: String) {
