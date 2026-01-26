@@ -375,6 +375,18 @@ class GroupedBytecodeNodes private constructor(
                 newTypes[label] = transformed
             }
         }
+
+        override fun visitInsn(opcode: Int) {
+            if (opcode == Opcodes.ATHROW) {
+                val top = analyzer.stack.lastOrNull()
+                if (top == OBJECT_NAME) {
+                    super.visitTypeInsn(Opcodes.CHECKCAST, "java/lang/Throwable")
+                    super.visitInsn(Opcodes.ATHROW)
+                    return
+                }
+            }
+            super.visitInsn(opcode)
+        }
     }
 
     class MyFieldMapper(
