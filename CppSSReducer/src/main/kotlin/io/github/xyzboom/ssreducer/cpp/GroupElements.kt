@@ -125,13 +125,11 @@ class GroupElements(
 
         fun isDecl(element: PsiElement): Boolean {
             return when (element) {
-                is OCDeclaration, is OCFile -> true
-                is OCStatement -> {
-                    val parent = element.parent
-                    if (parent is OCFunctionDeclaration) {
-                        parent.body !== element
-                    } else true
-                }
+                /**
+                 * If the statement is the function body, delete using replacement of empty statement.
+                 * @see io.github.xyzboom.ssreducer.cpp.GroupElements.deleteElement
+                 */
+                is OCDeclaration, is OCFile, is OCStatement -> true
 
                 else -> false
             }
@@ -481,6 +479,14 @@ class GroupElements(
     }
 
     private fun deleteElement(element: PsiElement) {
+        if (element is OCStatement){
+            val parent = element.parent
+            if (parent is OCFunctionDeclaration && parent.body === element) {
+                val emptyBlock = OCElementFactory.statementFromText("{}", element.context!!)
+                element.replace(emptyBlock)
+                return
+            }
+        }
         element.delete()
     }
 
