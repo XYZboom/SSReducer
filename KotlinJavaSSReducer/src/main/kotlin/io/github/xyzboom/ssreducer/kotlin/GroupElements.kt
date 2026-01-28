@@ -134,7 +134,7 @@ class GroupElements(
             visitor.visitElement(copiedFile)
         }
         return GroupElements(
-            project, copiedElements, elementsInOriProgram, maxLevel
+            project, copiedElements, HashSet(elementsInOriProgram), maxLevel
         )
     }
 
@@ -206,16 +206,16 @@ class GroupElements(
 
             is PsiPrimitiveType -> {
                 val text = when {
-                    type === PsiTypes.byteType() -> "Byte.parseByte(\"1\")"
-                    type === PsiTypes.charType() -> "'1'"
-                    type === PsiTypes.doubleType() -> "1.0"
-                    type === PsiTypes.floatType() -> "1.0f"
-                    type === PsiTypes.intType() -> "1"
-                    type === PsiTypes.longType() -> "1L"
-                    type === PsiTypes.shortType() -> "Short.parseShort(\"1\")"
-                    type === PsiTypes.booleanType() -> "true"
-                    type === PsiTypes.voidType() || type === PsiTypes.nullType() -> "null"
-                    else -> throw NoWhenBranchMatchedException()
+                    type == PsiTypes.byteType() -> "Byte.parseByte(\"1\")"
+                    type == PsiTypes.charType() -> "'1'"
+                    type == PsiTypes.doubleType() -> "1.0"
+                    type == PsiTypes.floatType() -> "1.0f"
+                    type == PsiTypes.intType() -> "1"
+                    type == PsiTypes.longType() -> "1L"
+                    type == PsiTypes.shortType() -> "Short.parseShort(\"1\")"
+                    type == PsiTypes.booleanType() -> "true"
+                    type == PsiTypes.voidType() || type == PsiTypes.nullType() -> "null"
+                    else -> throw NoWhenBranchMatchedException("type is: $type")
                 }
                 javaParserFacade.createExpressionFromText(text, context)
             }
@@ -546,7 +546,11 @@ class GroupElements(
 
         for (file in files) {
             fun recordNeedEdit(element: PsiElement) {
-                val targets = element.references.mapNotNull { it.resolve() ?: return@mapNotNull null }
+                val targets = try {
+                    element.references.mapNotNull { it.resolve() ?: return@mapNotNull null }
+                } catch (_: Exception) {
+                    emptyList()
+                }
                 val callTarget = if (element is PsiCall) {
                     val method = element.resolveMethod()
                     if (method != null && !method.shouldBeDeleted()) {
@@ -642,14 +646,14 @@ class GroupElements(
          * ```
          * Note that `a` in `foo(a)` need to be edited.
          */
-        fun PsiElement.actuallyNeedEdit(): Boolean {
+        fun PsiElement.actuallyNeedDelete(): Boolean {
             val wrapper = PsiWrapper.of(this)
             val inNeedDelete = wrapper in needDeleteElements
             if (inNeedDelete) {
                 if (!notPureDelete()) return true
             }
             if (isCollectable(this) && !inNeedDelete) return false
-            return parent?.actuallyNeedEdit() == true
+            return parent?.actuallyNeedDelete() == true
         }
 //        fun PsiElement.anyParentNeedDelete(): Boolean {
 //            if (PsiWrapper.of(this) in needDeleteElements) return true
@@ -658,7 +662,7 @@ class GroupElements(
 
         for ((element, target) in needEdit) {
             if (!element.isValid) continue
-            if (element.actuallyNeedEdit()) continue
+            if (element.actuallyNeedDelete()) continue
             editElement(element, target)
         }
 

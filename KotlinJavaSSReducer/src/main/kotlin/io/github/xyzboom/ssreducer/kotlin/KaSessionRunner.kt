@@ -114,8 +114,12 @@ import com.intellij.openapi.roots.impl.DirectoryIndex
 import com.intellij.openapi.roots.impl.DirectoryIndexImpl
 import com.intellij.openapi.roots.impl.ProjectFileIndexImpl
 import com.intellij.psi.impl.JavaPsiImplementationHelper
+import com.intellij.psi.impl.source.javadoc.JavadocManagerImpl
 import com.intellij.psi.impl.source.tree.JavaTreeGenerator
 import com.intellij.psi.impl.source.tree.TreeGenerator
+import com.intellij.psi.javadoc.CustomJavadocTagProvider
+import com.intellij.psi.javadoc.JavadocManager
+import com.intellij.psi.javadoc.JavadocTagInfo
 import com.intellij.workspaceModel.core.fileIndex.WorkspaceFileIndex
 import com.intellij.workspaceModel.core.fileIndex.WorkspaceFileIndexContributor
 import com.intellij.workspaceModel.core.fileIndex.impl.WorkspaceFileIndexImpl
@@ -417,6 +421,16 @@ class KaSessionRunner(
         )
         extensionArea.getExtensionPoint(TreeGenerator.EP_NAME)
             .registerExtension(JavaTreeGenerator(), kotlinCoreProjectEnvironment.parentDisposable)
+        project.registerService(
+            JavadocManager::class.java,
+            JavadocManagerImpl::class.java
+        )
+        CoreApplicationEnvironment.registerExtensionPoint(
+            project.extensionArea, JavadocTagInfo.EP_NAME, JavadocTagInfo::class.java
+        )
+        CoreApplicationEnvironment.registerExtensionPoint(
+            extensionArea, CustomJavadocTagProvider.EP_NAME, CustomJavadocTagProvider::class.java
+        )
     }
 
     private fun <T> KotlinCoreProjectEnvironment.registerApplicationServices(

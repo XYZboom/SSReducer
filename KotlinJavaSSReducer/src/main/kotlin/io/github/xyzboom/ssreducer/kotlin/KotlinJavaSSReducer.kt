@@ -18,6 +18,7 @@ import org.jetbrains.kotlin.config.JvmTarget
 import org.jetbrains.kotlin.config.LanguageVersion
 import java.io.File
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.time.measureTime
 
 @OptIn(ExperimentalAtomicApi::class)
 class KotlinJavaSSReducer : CommonReducer(workingDir), IReducer {
@@ -64,7 +65,7 @@ class KotlinJavaSSReducer : CommonReducer(workingDir), IReducer {
     }
 
     @OptIn(KaExperimentalApi::class)
-    override fun run() {
+    private fun myDoReduce() {
         val runner = KaSessionRunner(
             jvmTarget,
             languageVersion,
@@ -119,9 +120,18 @@ class KotlinJavaSSReducer : CommonReducer(workingDir), IReducer {
                 }
                 appearedResult[currentFileContents] = Unit
             }
-            println("predict times: $predictTimes")
-            println("cache hit times: ${fileContentsCache.values.sumOf { it.second }}")
+
+            println("predict times: ${predictTimes.load() - canceledPredictTimes.load()}")
+            println("predict canceled times: ${canceledPredictTimes.load()}")
+            println("file cache hit times: ${fileContentsCache.values.sumOf { it.second }}")
         }
+    }
+
+    override fun run() {
+        val times = measureTime {
+            myDoReduce()
+        }
+        println("reduce time: $times")
     }
 
     override val reducerName: String

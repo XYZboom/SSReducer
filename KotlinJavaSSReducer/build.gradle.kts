@@ -138,7 +138,7 @@ kotlin {
 }
 
 application {
-    mainClass = "io.github.xyzboom.ssreducer.SSReducer"
+    mainClass = "io.github.xyzboom.ssreducer.kotlin.KotlinJavaSSReducer"
 }
 
 tasks.named<JavaExec>("run") {
