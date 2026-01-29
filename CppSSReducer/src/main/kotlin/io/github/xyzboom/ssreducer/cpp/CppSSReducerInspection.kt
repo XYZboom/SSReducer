@@ -22,6 +22,7 @@ class CppSSReducerInspection : GlobalInspectionTool() {
         globalContext: GlobalInspectionContext,
         problemDescriptionsProcessor: ProblemDescriptionsProcessor
     ) {
+        setupLogger()
         val exception = runCatching {
             val project = manager.project
             val args = System.getProperty("CppSSReducerExtraArgs") ?: run {
