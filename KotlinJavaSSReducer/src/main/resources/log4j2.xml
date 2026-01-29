@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration status="WARN" monitorInterval="30">
+  <Properties>
+    <Property name="ssreducer.logger.console">DEBUG</Property>
+    <Property name="ssreducer.logger.traceFile">TRACE</Property>
+    <Property name="ssreducer.logger.traceFile.ImmediateFlush">true</Property>
+  </Properties>
+
+  <!-- 定义 Appenders -->
+  <Appenders>
+    <!-- 控制台 Appender -->
+    <Console name="Console" target="SYSTEM_OUT">
+      <PatternLayout pattern="[%t] %-5p %l %x - %m%n"/>
+      <ThresholdFilter level="${sys:ssreducer.logger.console:-DEBUG}" onMatch="ACCEPT" onMismatch="DENY"/>
+    </Console>
+
+    <!-- INFO 文件 Appender -->
+    <RollingRandomAccessFile name="InfoFile"
+                             fileName="ssreducer-info.log"
+                             filePattern="ssreducer-info-%d{yyyy-MM-dd}-%i.log">
+      <PatternLayout pattern="[%t] %-5p %l %x - %m%n"/>
+      <Policies>
+        <SizeBasedTriggeringPolicy size="10 MB"/>
+        <TimeBasedTriggeringPolicy interval="1" modulate="true"/>
+      </Policies>
+      <DefaultRolloverStrategy max="1"/>
+      <ThresholdFilter level="INFO" onMatch="ACCEPT" onMismatch="DENY"/>
+    </RollingRandomAccessFile>
+
+    <!-- TRACE 文件 Appender -->
+    <RollingRandomAccessFile name="TraceFile"
+                             fileName="ssreducer-trace.log"
+                             filePattern="ssreducer-trace-%d{yyyy-MM-dd}-%i.log"
+                             immediateFlush="${sys:ssreducer.logger.traceFile.ImmediateFlush:-true}">
+      <PatternLayout pattern="[%t] %-5p %l %x - %m%n"/>
+      <Policies>
+        <SizeBasedTriggeringPolicy size="20 MB"/>
+        <TimeBasedTriggeringPolicy interval="1" modulate="true"/>
+      </Policies>
+      <DefaultRolloverStrategy max="1"/>
+      <ThresholdFilter level="${sys:ssreducer.logger.traceFile:-TRACE}" onMatch="ACCEPT" onMismatch="DENY"/>
+    </RollingRandomAccessFile>
+  </Appenders>
+
+  <!-- 定义 Loggers -->
+  <Loggers>
+    <!-- 特定包名的 Logger -->
+    <Logger name="io.github.xyzboom.ssreducer" level="TRACE" additivity="false">
+      <AppenderRef ref="Console"/>
+      <AppenderRef ref="InfoFile"/>
+      <AppenderRef ref="TraceFile"/>
+    </Logger>
+
+    <!-- 根 Logger -->
+    <Root level="INFO">
+      <AppenderRef ref="Console"/>
+    </Root>
+  </Loggers>
+</Configuration>

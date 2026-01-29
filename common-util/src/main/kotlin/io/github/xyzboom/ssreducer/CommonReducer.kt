@@ -6,6 +6,7 @@ import com.github.ajalt.clikt.parameters.types.boolean
 import com.github.ajalt.clikt.parameters.types.file
 import com.github.ajalt.clikt.parameters.types.int
 import com.github.ajalt.clikt.parameters.types.long
+import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -22,6 +23,11 @@ import kotlin.concurrent.atomics.incrementAndFetch
 abstract class CommonReducer(
     protected val workingDir: String,
 ) : CliktCommand() {
+
+    companion object {
+        private val logger = KotlinLogging.logger {}
+    }
+
     protected val predictScript by run<OptionDelegate<File>> {
         option("--predict", "-p")
             .file(mustExist = true, canBeDir = false, canBeFile = true, mustBeReadable = true)
@@ -124,17 +130,17 @@ abstract class CommonReducer(
         val tempDir: Path = Files.createTempDirectory(reducerName)
         val tempScript = preparePredictFiles(fileContents, tempDir)
         val predictTimeNow = predictTimes.incrementAndFetch()
-        println("predict $predictTimeNow at temp dir: $tempDir")
+        logger.info { "predict $predictTimeNow at temp dir: $tempDir" }
         val process = Runtime.getRuntime().exec(
             tempScript.absolutePath, System.getenv().map { "${it.key}=${it.value}" }.toTypedArray(),
             tempDir.toFile()
         )
         val predictExit = try {
             process.inputStream.bufferedReader().forEachLine {
-                println(it)
+                logger.info { it }
             }
             process.errorStream.bufferedReader().forEachLine {
-                System.err.println(it)
+                logger.warn { it }
             }
             val completed = process.waitFor(predictTimeout, TimeUnit.MILLISECONDS)
             if (!completed) {
@@ -145,14 +151,14 @@ abstract class CommonReducer(
             }
         } catch (_: InterruptedException) {
             process.destroyForcibly()
-            println("destroy $predictTimeNow")
+            logger.info { "destroy $predictTimeNow" }
             canceledPredictTimes.incrementAndFetch()
             Thread.currentThread().interrupt()
         }
         val predictResult = predictExit == 0
         fileContentsCache[fileContents] = predictResult to 0
         if (predictResult) {
-            println("$predictTimeNow is a successful predict")
+            logger.info { "$predictTimeNow is a successful predict" }
         }
         if (saveTemps) {
             saveResult(fileContents, File(targetDir, "${predictTimeNow}_${predictResult}_${predictExit}"))

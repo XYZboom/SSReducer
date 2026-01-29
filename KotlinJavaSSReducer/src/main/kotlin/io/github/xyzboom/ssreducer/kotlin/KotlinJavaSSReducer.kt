@@ -5,6 +5,7 @@ import com.github.ajalt.clikt.parameters.options.*
 import com.github.ajalt.clikt.parameters.types.enum
 import com.github.ajalt.clikt.parameters.types.file
 import com.intellij.psi.PsiFile
+import io.github.oshai.kotlinlogging.KotlinLogging
 import io.github.xyzboom.ssreducer.CommonReducer
 import io.github.xyzboom.ssreducer.IReducer
 import io.github.xyzboom.ssreducer.ISavable
@@ -23,6 +24,7 @@ import kotlin.time.measureTime
 @OptIn(ExperimentalAtomicApi::class)
 class KotlinJavaSSReducer : CommonReducer(workingDir), IReducer {
     companion object {
+        private val logger = KotlinLogging.logger {}
         @JvmStatic
         fun main(args: Array<String>) {
             KotlinJavaSSReducer().main(args)
@@ -83,8 +85,10 @@ class KotlinJavaSSReducer : CommonReducer(workingDir), IReducer {
             GroupElements.groupElements(project, psiRoots)
             val copiedRoots = psiRoots.map { it.copy() as PsiFile }
             var currentGroup = GroupElements.groupElements(project, copiedRoots)
-            var currentFileContents = currentGroup.fileContents().asSavable()
+            var currentFileContents = emptyMap<String, ISavable>()
+            var fixPoint = 0
             while (true) {
+                logger.info { "=== Reduce Round: ${fixPoint++} ===" }
                 var currentLevel = 1
                 while (currentLevel <= currentGroup.maxLevel) {
                     val currentElements = currentGroup.elements.filter { it.value == currentLevel }.keys.toList()

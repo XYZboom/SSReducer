@@ -92,7 +92,7 @@ class GroupElements(
 
     fun applyEdit(): GroupElements {
         return GroupElements(
-            project, elements, HashSet(elements.keys), maxLevel
+            project, HashMap(elements), HashSet(elements.keys), maxLevel
         )
     }
 

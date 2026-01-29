@@ -27,6 +27,8 @@ val aaStreamexVersion: String by project
 val aaCoroutinesVersion: String by project
 
 dependencies {
+    runtimeOnly("org.apache.logging.log4j:log4j-core:2.25.3")
+    runtimeOnly("org.apache.logging.log4j:log4j-slf4j2-impl:2.25.3")
     api(project(":api"))
     implementation(project(":common-util"))
 
