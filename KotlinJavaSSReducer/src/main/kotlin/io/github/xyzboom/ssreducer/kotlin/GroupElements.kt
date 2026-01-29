@@ -31,11 +31,7 @@ class GroupElements(
                 is PsiNamedElement -> true
                 is PsiStatement -> true
                 is PsiComment -> true
-                is PsiCodeBlock -> element.parent !is PsiClassInitializer
-                        && element.parent !is PsiLoopStatement
-                        && element.parent.parent !is PsiForStatement
-                        && element.parent !is PsiTryStatement
-                        && element.parent !is PsiCatchSection
+                is PsiCodeBlock -> element.parent.parent !is PsiForStatement
 
                 else -> false
             }
@@ -415,6 +411,44 @@ class GroupElements(
     }
 
     fun deleteElement(element: PsiElement) {
+        val parent = element.parent
+
+        if (parent is PsiClassInitializer) {
+            if (parent.body === element) {
+                element.replace(javaParserFacade.createCodeBlock())
+                return
+            } else {
+                element.delete()
+                return
+            }
+        }
+        if (parent is PsiLoopStatement) {
+            if (parent.body === element) {
+                element.replace(javaParserFacade.createStatementFromText("{}", element.context))
+                return
+            } else {
+                element.delete()
+                return
+            }
+        }
+        if (parent is PsiTryStatement) {
+            if (parent.tryBlock == element) {
+                element.replace(javaParserFacade.createCodeBlock())
+                return
+            } else {
+                element.delete()
+                return
+            }
+        }
+        if (parent is PsiCatchSection) {
+            if (parent.catchBlock == element) {
+                element.replace(javaParserFacade.createCodeBlock())
+                return
+            } else {
+                element.delete()
+                return
+            }
+        }
         if (element is PsiLocalVariable) {
             val initializer = element.initializer
             if (initializer == null) {
