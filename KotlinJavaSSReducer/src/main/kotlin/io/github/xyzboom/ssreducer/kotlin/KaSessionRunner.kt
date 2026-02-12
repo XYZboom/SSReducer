@@ -113,7 +113,9 @@ import com.intellij.openapi.roots.ProjectFileIndex
 import com.intellij.openapi.roots.impl.DirectoryIndex
 import com.intellij.openapi.roots.impl.DirectoryIndexImpl
 import com.intellij.openapi.roots.impl.ProjectFileIndexImpl
+import com.intellij.psi.PsiNameHelper
 import com.intellij.psi.impl.JavaPsiImplementationHelper
+import com.intellij.psi.impl.PsiNameHelperImpl
 import com.intellij.psi.impl.source.javadoc.JavadocManagerImpl
 import com.intellij.psi.impl.source.tree.JavaTreeGenerator
 import com.intellij.psi.impl.source.tree.TreeGenerator
@@ -430,6 +432,10 @@ class KaSessionRunner(
         )
         CoreApplicationEnvironment.registerExtensionPoint(
             extensionArea, CustomJavadocTagProvider.EP_NAME, CustomJavadocTagProvider::class.java
+        )
+        project.registerService(
+            PsiNameHelper::class.java,
+            PsiNameHelperImpl::class.java
         )
     }
 

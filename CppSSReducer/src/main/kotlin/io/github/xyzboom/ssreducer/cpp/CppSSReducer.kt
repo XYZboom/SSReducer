@@ -16,6 +16,7 @@ import org.apache.commons.csv.CSVPrinter
 import java.util.concurrent.Callable
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.random.Random
 import kotlin.time.Duration
 import kotlin.time.TimeSource
 
@@ -97,7 +98,10 @@ class CppSSReducer(
                         return@DDMin cacheResult to null
                     }
                     val fileContents = ReadAction.nonBlocking(Callable {
-                        group.reconstructDependencies(needEdit, needDelete)
+                        group.reconstructDependencies(
+                            needEdit, needDelete,
+                            rdProb, Random(seed)
+                        )
                         group.fileContents()
                     }).executeSynchronously()
                     val predictResult = myPredict(elementIds, fileContents)

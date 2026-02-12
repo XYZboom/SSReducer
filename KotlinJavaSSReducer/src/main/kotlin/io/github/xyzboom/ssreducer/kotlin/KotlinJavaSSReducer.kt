@@ -4,21 +4,29 @@ import com.github.ajalt.clikt.core.main
 import com.github.ajalt.clikt.parameters.options.*
 import com.github.ajalt.clikt.parameters.types.enum
 import com.github.ajalt.clikt.parameters.types.file
+import com.intellij.lang.java.JavaLanguage
+import com.intellij.openapi.project.Project
 import com.intellij.psi.PsiFile
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.github.xyzboom.ssreducer.CommonReducer
 import io.github.xyzboom.ssreducer.IReducer
-import io.github.xyzboom.ssreducer.ISavable
 import io.github.xyzboom.ssreducer.PsiWrapper
 import io.github.xyzboom.ssreducer.algorithm.DDMin
 import io.github.xyzboom.ssreducer.algorithm.DDMinConcurrent
+import io.github.xyzboom.ssreducer.countTokens
 import io.github.xyzboom.ssreducer.workingDir
+import org.apache.commons.csv.CSVFormat
+import org.apache.commons.csv.CSVPrinter
 import org.jetbrains.kotlin.analysis.api.KaExperimentalApi
 import org.jetbrains.kotlin.analysis.api.projectStructure.KaSourceModule
 import org.jetbrains.kotlin.config.JvmTarget
 import org.jetbrains.kotlin.config.LanguageVersion
+import org.jetbrains.kotlin.idea.KotlinLanguage
 import java.io.File
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.random.Random
+import kotlin.time.Duration
+import kotlin.time.TimeSource
 import kotlin.time.measureTime
 
 @OptIn(ExperimentalAtomicApi::class)
@@ -66,6 +74,14 @@ class KotlinJavaSSReducer : CommonReducer(workingDir), IReducer {
             .multiple(default = emptyList())
     }
 
+    private val startMark = TimeSource.Monotonic.markNow()
+    private val profiler = mutableListOf<Pair<Duration, Map<String, String>>>()
+
+    private fun profile(fileContents: Map<String, String>) {
+        val elapsed = startMark.elapsedNow()
+        profiler.add(elapsed to fileContents)
+    }
+
     @OptIn(KaExperimentalApi::class)
     private fun myDoReduce() {
         val runner = KaSessionRunner(
@@ -85,7 +101,7 @@ class KotlinJavaSSReducer : CommonReducer(workingDir), IReducer {
             GroupElements.groupElements(project, psiRoots)
             val copiedRoots = psiRoots.map { it.copy() as PsiFile }
             var currentGroup = GroupElements.groupElements(project, copiedRoots)
-            var currentFileContents = emptyMap<String, ISavable>()
+            var currentFileContents = currentGroup.fileContents()
             var fixPoint = 0
             while (true) {
                 logger.info { "=== Reduce Round: ${fixPoint++} ===" }
@@ -97,18 +113,19 @@ class KotlinJavaSSReducer : CommonReducer(workingDir), IReducer {
                         continue
                     }
                     val notCurrentElements = currentGroup.elements.filter { it.value != currentLevel }
-                    val predict: (List<PsiWrapper<*>>) -> Pair<Boolean, Pair<GroupElements, Map<String, ISavable>>> =
+                    val predict: (List<PsiWrapper<*>>) -> Pair<Boolean, Pair<GroupElements, Map<String, String>>> =
                         DDMin@{
                             val group = currentGroup.copyOf(it.associateWith { currentLevel } + notCurrentElements)
-                            group.reconstructDependencies()
-                            val fileContents = group.fileContents().asSavable()
-                            val predictResult = predict(fileContents)
+                            group.reconstructDependencies(rdProb, Random(seed))
+                            val fileContents = group.fileContents()
+                            val predictResult = predict(fileContents.asSavable())
                             return@DDMin predictResult to (group to fileContents)
                         }
-                    val onSuccess: (List<PsiWrapper<*>>, Pair<GroupElements, Map<String, ISavable>>) -> Unit =
+                    val onSuccess: (List<PsiWrapper<*>>, Pair<GroupElements, Map<String, String>>) -> Unit =
                         onSuccess@{ _, (remainGroup, fileContents) ->
                             currentGroup = remainGroup.applyEdit()
                             currentFileContents = fileContents
+                            profile(fileContents)
                         }
                     val ddmin = if (jobs == 1) {
                         DDMin(predict, onSuccess)
@@ -118,17 +135,41 @@ class KotlinJavaSSReducer : CommonReducer(workingDir), IReducer {
                     ddmin.execute(currentElements)
                     currentLevel++
                 }
-                if (appearedResult.containsKey(currentFileContents)) {
-                    saveResult(currentFileContents)
+                val currentSavable = currentFileContents.asSavable()
+                if (appearedResult.containsKey(currentSavable)) {
+                    saveResult(currentSavable)
                     break
                 }
-                appearedResult[currentFileContents] = Unit
+                appearedResult[currentSavable] = Unit
             }
 
+            saveProfiler(project)
             println("predict times: ${predictTimes.load() - canceledPredictTimes.load()}")
             println("predict canceled times: ${canceledPredictTimes.load()}")
             println("file cache hit times: ${fileContentsCache.values.sumOf { it.second }}")
         }
+    }
+
+    private fun saveProfiler(project: Project) {
+        targetDir.mkdirs()
+        val csv = CSVPrinter(
+            targetDir.resolve("profiler.csv").writer(),
+            CSVFormat.Builder.create()
+                .setHeader("Time(s)", "File", "Token Count")
+                .get()
+        )
+        for ((dur, files) in profiler) {
+            for ((file, content) in files) {
+                val language = if (file.endsWith(".java")) {
+                    JavaLanguage.INSTANCE
+                } else {
+                    KotlinLanguage.INSTANCE
+                }
+                val tokens = countTokens(content, language, project)
+                csv.printRecord(dur.inWholeSeconds, file.removePrefix(workingDir), tokens)
+            }
+        }
+        csv.close(true)
     }
 
     override fun run() {

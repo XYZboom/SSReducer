@@ -4,6 +4,7 @@ import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.parameters.options.*
 import com.github.ajalt.clikt.parameters.types.boolean
 import com.github.ajalt.clikt.parameters.types.file
+import com.github.ajalt.clikt.parameters.types.float
 import com.github.ajalt.clikt.parameters.types.int
 import com.github.ajalt.clikt.parameters.types.long
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -109,6 +110,32 @@ abstract class CommonReducer(
             .default(Runtime.getRuntime().availableProcessors())
     }
 
+    protected val rdProb by run<OptionDelegate<Float>> {
+        option("--reconstructDependencyProb", "--rdProb")
+            .float()
+            .default(1.0f)
+            .help {
+                """Probability of reconstructing dependencies when reducing.
+            Must be between 0 and 1.
+            NOTE: EXPERIMENTAL ARGUMENT!!!!
+            """.trimIndent()
+            }
+            .validate {
+                require(it in 0.0f..1.0f) {
+                    "Reconstruct dependency probability must be between 0 and 1"
+                }
+            }
+    }
+
+    protected val seed by run<OptionDelegate<Long>> {
+        option("--seed")
+            .long()
+            .default(System.currentTimeMillis())
+            .help {
+                "Random seed for the reducer. Default is current time in milliseconds."
+            }
+    }
+
     /**
      * Predict script execution times, including those canceled.
      */
@@ -163,9 +190,10 @@ abstract class CommonReducer(
         if (saveTemps) {
             saveResult(fileContents, File(targetDir, "${predictTimeNow}_${predictResult}_${predictExit}"))
         }
-        CoroutineScope(Dispatchers.IO).launch {
-            tempDir.toFile().deleteRecursively()
-        }
+        CoroutineScope(Dispatchers.IO)
+            .launch {
+                tempDir.toFile().deleteRecursively()
+            }
         return predictResult
     }
 

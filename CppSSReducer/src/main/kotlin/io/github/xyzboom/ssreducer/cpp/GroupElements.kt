@@ -24,6 +24,7 @@ import io.github.xyzboom.ssreducer.parentOfTypeAndDirectChild
 import kotlin.math.max
 import com.jetbrains.cidr.lang.symbols.OCSymbolHolder
 import io.github.xyzboom.ssreducer.andThen
+import kotlin.random.Random
 
 class GroupElements(
     val project: Project,
@@ -615,7 +616,8 @@ class GroupElements(
     }
 
     fun reconstructDependencies(
-        needEdit: List<Pair<PsiElement, () -> Unit>>, needDeleteElements: Set<PsiWrapper<PsiElement>>
+        needEdit: List<Pair<PsiElement, () -> Unit>>, needDeleteElements: Set<PsiWrapper<PsiElement>>,
+        rdProb: Float, random: Random
     ) {
         fun PsiElement.anyParentNeedDelete(): Boolean {
             if (PsiWrapper.of(this) in needDeleteElements) return true
@@ -625,6 +627,7 @@ class GroupElements(
         for ((element, editFunc) in needEdit) {
             if (!element.isValid) continue
             if (element.anyParentNeedDelete()) continue
+            if (random.nextFloat() > rdProb) continue
             editFunc()
         }
 

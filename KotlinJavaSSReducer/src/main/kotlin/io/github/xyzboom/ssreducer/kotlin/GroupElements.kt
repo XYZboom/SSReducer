@@ -10,6 +10,7 @@ import io.github.xyzboom.ssreducer.PsiWrapper
 import io.github.xyzboom.ssreducer.parentOfTypeAndDirectChild
 import org.jetbrains.kotlin.psi.KtVisitorVoid
 import kotlin.math.max
+import kotlin.random.Random
 
 @Suppress("UnstableApiUsage")
 class GroupElements(
@@ -535,7 +536,7 @@ class GroupElements(
         return wrapper in elementsInOriProgram && wrapper !in elements
     }
 
-    fun reconstructDependencies() {
+    fun reconstructDependencies(rdProb: Float, random: Random) {
         @Suppress("UNCHECKED_CAST")
         val files = elements.keys.filter { it.element is PsiFile }.map { it.element } as List<PsiFile>
         // we must resolve reference first. Otherwise, the reference will lose after delete.
@@ -697,6 +698,7 @@ class GroupElements(
         for ((element, target) in needEdit) {
             if (!element.isValid) continue
             if (element.actuallyNeedDelete()) continue
+            if (random.nextFloat() > rdProb) continue
             editElement(element, target)
         }
 
@@ -712,7 +714,9 @@ class GroupElements(
         for (file in files) {
             if (file is PsiJavaFile) {
                 javaCodeStyleManager.shortenClassReferences(file)
-                javaCodeStyleManager.optimizeImports(file)
+                // when reconstruct prob is less than 1, we may have some unresolved reference after edit.
+                // We ignore this error during optimize imports.
+                runCatching { javaCodeStyleManager.optimizeImports(file) }
             }
         }
     }
