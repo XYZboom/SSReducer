@@ -98,10 +98,11 @@ class CppSSReducer(
                         return@DDMin cacheResult to null
                     }
                     val fileContents = ReadAction.nonBlocking(Callable {
-                        group.reconstructDependencies(
+                        val rdCount = group.reconstructDependencies(
                             needEdit, needDelete,
                             rdProb, Random(seed)
                         )
+                        reconstructedCount.fetchAndAdd(rdCount)
                         group.fileContents()
                     }).executeSynchronously()
                     val predictResult = myPredict(elementIds, fileContents)
@@ -133,6 +134,7 @@ class CppSSReducer(
 
         saveProfiler()
         println("predict times: ${predictTimes.load() - canceledPredictTimes.load()}")
+        println("reconstructed times: ${reconstructedCount.load()}")
         println("predict canceled times: ${canceledPredictTimes.load()}")
         println("file cache hit times: ${fileContentsCache.values.sumOf { it.second }}")
         println("elements cache hit times: ${elementsCache.values.sumOf { it.value.second }}")

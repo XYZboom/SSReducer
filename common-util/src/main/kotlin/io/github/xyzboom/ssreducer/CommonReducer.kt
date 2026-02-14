@@ -141,6 +141,7 @@ abstract class CommonReducer(
      */
     protected var predictTimes = AtomicInt(0)
     protected var canceledPredictTimes = AtomicInt(0)
+    protected var reconstructedCount = AtomicInt(0)
     protected open val reducerName: String
         get() = this::class.simpleName!!
 

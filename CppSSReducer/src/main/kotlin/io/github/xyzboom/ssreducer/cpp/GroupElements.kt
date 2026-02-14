@@ -615,10 +615,15 @@ class GroupElements(
         return needEdit to needDeleteElements
     }
 
+    /**
+     * @param rdProb the probability to reconstruct a dependency.
+     * @return The count of reconstructed dependencies.
+     */
     fun reconstructDependencies(
         needEdit: List<Pair<PsiElement, () -> Unit>>, needDeleteElements: Set<PsiWrapper<PsiElement>>,
         rdProb: Float, random: Random
-    ) {
+    ): Int {
+        var reconstructedCount = 0
         fun PsiElement.anyParentNeedDelete(): Boolean {
             if (PsiWrapper.of(this) in needDeleteElements) return true
             return parent?.anyParentNeedDelete() == true
@@ -627,8 +632,9 @@ class GroupElements(
         for ((element, editFunc) in needEdit) {
             if (!element.isValid) continue
             if (element.anyParentNeedDelete()) continue
-            if (random.nextFloat() > rdProb) continue
+            if (rdProb < 1.0f && random.nextFloat() > rdProb) continue
             editFunc()
+            reconstructedCount++
         }
 
         val sortedNeedDelete = needDeleteElements.sortedBy {
@@ -648,5 +654,6 @@ class GroupElements(
         }
 
         maxLevel = elements.values.maxOrNull() ?: 1
+        return reconstructedCount
     }
 }
