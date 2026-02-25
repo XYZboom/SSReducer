@@ -111,10 +111,41 @@ These options are implemented in `CommonReducer`.
     - Each path must exist and be readable.
     - Each path must be located **inside the current working directory**.
 
+- `--deps` (repeatable)
+  - Type: file or directory
+  - Default: empty list
+  - Meaning: additional dependency files required for prediction.
+  - Constraints:
+    - Each path must exist and be readable.
+    - Each path must be located **inside the current working directory**.
+  - Note: If is a directory, all files under it will be included.
+
 - `--saveTemps`
   - Type: boolean
   - Default: `false`
   - Meaning: if enabled, SSReducer saves each predict attempt’s materialized files into `--out/<predictIndex>_<predictResult>_<exitCode>`.
+
+- `-j`, `--jobs=`
+  - Type: int
+  - Default: available processors on current machine
+  - Meaning: maximum number of prediction scripts running in parallel.
+  - Notes: 
+    - Setting `--jobs=1` forces the reducer to run in a single thread, which can be useful for debugging or if the predict script is not thread-safe.
+
+- `--seed`
+  - Type: long
+  - Default: current time in milliseconds.
+  - Meaning: random seed for the reducer.
+  - Notes:
+    - Setting a fixed seed can help with reproducibility.
+
+- `--reconstructDependencyProb`, `--rdProb`
+  - Type: float
+  - Default: 1
+  - Meaning: probability of reconstructing dependencies during reduction.
+  - Constraint: must be between 0 and 1.
+  - Notes:
+    - This is an EXPERIMENTAL ARGUMENT
 
 #### Java reducer arguments
 
