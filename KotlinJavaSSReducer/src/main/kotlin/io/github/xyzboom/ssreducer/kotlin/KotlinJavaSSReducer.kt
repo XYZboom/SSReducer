@@ -116,7 +116,8 @@ class KotlinJavaSSReducer : CommonReducer(workingDir), IReducer {
                     val predict: (List<PsiWrapper<*>>) -> Pair<Boolean, Pair<GroupElements, Map<String, String>>> =
                         DDMin@{
                             val group = currentGroup.copyOf(it.associateWith { currentLevel } + notCurrentElements)
-                            group.reconstructDependencies(rdProb, Random(seed))
+                            val rdCount = group.reconstructDependencies(rdProb, Random(seed))
+                            reconstructedCount.fetchAndAdd(rdCount)
                             val fileContents = group.fileContents()
                             val predictResult = predict(fileContents.asSavable())
                             return@DDMin predictResult to (group to fileContents)
@@ -145,6 +146,7 @@ class KotlinJavaSSReducer : CommonReducer(workingDir), IReducer {
 
             saveProfiler(project)
             println("predict times: ${predictTimes.load() - canceledPredictTimes.load()}")
+            println("reconstructed times: ${reconstructedCount.load()}")
             println("predict canceled times: ${canceledPredictTimes.load()}")
             println("file cache hit times: ${fileContentsCache.values.sumOf { it.second }}")
         }

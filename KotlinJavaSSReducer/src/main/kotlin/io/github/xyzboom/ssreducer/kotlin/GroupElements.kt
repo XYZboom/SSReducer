@@ -536,7 +536,7 @@ class GroupElements(
         return wrapper in elementsInOriProgram && wrapper !in elements
     }
 
-    fun reconstructDependencies(rdProb: Float, random: Random) {
+    fun reconstructDependencies(rdProb: Float, random: Random): Int {
         @Suppress("UNCHECKED_CAST")
         val files = elements.keys.filter { it.element is PsiFile }.map { it.element } as List<PsiFile>
         // we must resolve reference first. Otherwise, the reference will lose after delete.
@@ -695,10 +695,12 @@ class GroupElements(
 //            return parent?.anyParentNeedDelete() == true
 //        }
 
+        var rdCount = 0
         for ((element, target) in needEdit) {
             if (!element.isValid) continue
             if (element.actuallyNeedDelete()) continue
-            if (random.nextFloat() > rdProb) continue
+            if (rdProb < 1.0f && random.nextFloat() > rdProb) continue
+            rdCount++
             editElement(element, target)
         }
 
@@ -719,5 +721,7 @@ class GroupElements(
                 runCatching { javaCodeStyleManager.optimizeImports(file) }
             }
         }
+
+        return rdCount
     }
 }
