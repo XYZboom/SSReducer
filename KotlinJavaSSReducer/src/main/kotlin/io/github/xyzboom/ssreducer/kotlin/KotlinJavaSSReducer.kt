@@ -4,17 +4,17 @@ import com.github.ajalt.clikt.core.main
 import com.github.ajalt.clikt.parameters.options.*
 import com.github.ajalt.clikt.parameters.types.enum
 import com.github.ajalt.clikt.parameters.types.file
+import com.intellij.application.options.CodeStyle
 import com.intellij.lang.java.JavaLanguage
 import com.intellij.openapi.project.Project
 import com.intellij.psi.PsiFile
+import com.intellij.psi.codeStyle.CodeStyleSettings
+import com.intellij.psi.codeStyle.CodeStyleSettingsManager
+import com.intellij.psi.codeStyle.JavaCodeStyleSettings
 import io.github.oshai.kotlinlogging.KotlinLogging
-import io.github.xyzboom.ssreducer.CommonReducer
-import io.github.xyzboom.ssreducer.IReducer
-import io.github.xyzboom.ssreducer.PsiWrapper
+import io.github.xyzboom.ssreducer.*
 import io.github.xyzboom.ssreducer.algorithm.DDMin
 import io.github.xyzboom.ssreducer.algorithm.DDMinConcurrent
-import io.github.xyzboom.ssreducer.countTokens
-import io.github.xyzboom.ssreducer.workingDir
 import org.apache.commons.csv.CSVFormat
 import org.apache.commons.csv.CSVPrinter
 import org.jetbrains.kotlin.analysis.api.KaExperimentalApi
@@ -96,6 +96,7 @@ class KotlinJavaSSReducer : CommonReducer(workingDir), IReducer {
         )
         runner.runInSession { session, environment, modules ->
             val project = session.project
+            val settings = createTempSettings(project)
             val module = modules[0] as KaSourceModule
             val psiRoots = module.psiRoots.filterIsInstance<PsiFile>()
             GroupElements.groupElements(project, psiRoots)
@@ -116,8 +117,10 @@ class KotlinJavaSSReducer : CommonReducer(workingDir), IReducer {
                     val predict: (List<PsiWrapper<*>>) -> Pair<Boolean, Pair<GroupElements, Map<String, String>>> =
                         DDMin@{
                             val group = currentGroup.copyOf(it.associateWith { currentLevel } + notCurrentElements)
-                            val rdCount = group.reconstructDependencies(rdProb, Random(seed))
-                            reconstructedCount.fetchAndAdd(rdCount)
+                            CodeStyle.runWithLocalSettings(project, settings, Runnable {
+                                val rdCount = group.reconstructDependencies(rdProb, Random(seed))
+                                reconstructedCount.fetchAndAdd(rdCount)
+                            })
                             val fileContents = group.fileContents()
                             val predictResult = predict(fileContents.asSavable())
                             return@DDMin predictResult to (group to fileContents)
@@ -150,6 +153,17 @@ class KotlinJavaSSReducer : CommonReducer(workingDir), IReducer {
             println("predict canceled times: ${canceledPredictTimes.load()}")
             println("file cache hit times: ${fileContentsCache.values.sumOf { it.second }}")
         }
+    }
+
+    private fun createTempSettings(project: Project): CodeStyleSettings {
+        val base: CodeStyleSettings = CodeStyle.getSettings(project)
+        val manager: CodeStyleSettingsManager = CodeStyleSettingsManager.getInstance()
+        val tmp = manager.cloneSettings(base)
+
+        val java = tmp.getCustomSettings(JavaCodeStyleSettings::class.java)
+        java.CLASS_COUNT_TO_USE_IMPORT_ON_DEMAND = 1
+        java.NAMES_COUNT_TO_USE_IMPORT_ON_DEMAND = 1
+        return tmp
     }
 
     private fun saveProfiler(project: Project) {
