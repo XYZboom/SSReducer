@@ -61,7 +61,7 @@ class CppSSReducer(
         val vFiles = collectVirtualFilesByRoots(localFileSystem, sourceRoots)
         val psiManager = PsiManager.getInstance(project)
         val ocFiles = vFiles.mapNotNull { psiManager.findFile(it) }.filterIsInstance<OCFile>()
-        GroupElements.preprocess(project, ocFiles)
+        GroupElements.preprocess(project, ocFiles, enableGrouping)
         val copiedRoots = ocFiles.map { it.copy() as OCFile }
         var currentGroup = GroupElements.groupElements(project, copiedRoots)
         var currentContents = currentGroup.fileContents()
@@ -90,7 +90,7 @@ class CppSSReducer(
                     }).executeSynchronously()
                     val (needEdit, needDelete) =
                         ReadAction.nonBlocking(Callable {
-                            return@Callable group.preReconstructDependencies()
+                            return@Callable group.preReconstructDependencies(enableGrouping)
                         }).executeSynchronously()
                     val elementIds = group.elements.keys.map { ele -> ele.id }.toSet()
                     val cacheResult = elementsCacheResult(elementIds)

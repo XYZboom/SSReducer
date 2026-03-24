@@ -536,7 +536,10 @@ class GroupElements(
         return wrapper in elementsInOriProgram && wrapper !in elements
     }
 
-    fun reconstructDependencies(rdProb: Float, random: Random): Int {
+    fun reconstructDependencies(
+        enableGrouping: Boolean,
+        rdProb: Float, random: Random
+    ): Int {
         @Suppress("UNCHECKED_CAST")
         val files = elements.keys.filter { it.element is PsiFile }.map { it.element } as List<PsiFile>
         // we must resolve reference first. Otherwise, the reference will lose after delete.
@@ -591,7 +594,7 @@ class GroupElements(
                     if (method != null && !method.shouldBeDeleted()) {
                         for ((i, param) in method.parameters.withIndex()) {
                             val sourceParam = param.sourceElement
-                            if (sourceParam.shouldBeDeleted()) {
+                            if (sourceParam.shouldBeDeleted() && enableGrouping) {
                                 element.argumentList?.expressions[i]?.let {
                                     needDeleteElements.add(PsiWrapper.of(it))
                                 }

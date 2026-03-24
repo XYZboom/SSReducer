@@ -35,11 +35,16 @@ class GroupElements(
 
     private val allScope = GlobalSearchScope.allScope(project)
 
-    private class ProcessVisitor(private val project: Project) : OCReverseDFSVisitor() {
+    private class ProcessVisitor(
+        private val project: Project,
+        private val enableGrouping: Boolean
+    ) : OCReverseDFSVisitor() {
         override fun visitElement(element: PsiElement) {
             super.visitElement(element)
             PsiWrapper.of(element)
-            recordDeclAndDef(element)
+            if (enableGrouping) {
+                recordDeclAndDef(element)
+            }
             if (element is OCExpression) {
                 element.putCopyableUserData(TYPE_AND_CONTEXT_KEY, element.resolvedType to element.context!!)
             }
@@ -114,9 +119,9 @@ class GroupElements(
 
         private val TYPE_AND_CONTEXT_KEY = Key.create<Pair<OCType, PsiElement>>("TYPE_AND_CONTEXT_KEY")
 
-        fun preprocess(project: Project, files: Collection<OCFile>) {
+        fun preprocess(project: Project, files: Collection<OCFile>, enableGrouping: Boolean) {
             for (file in files) {
-                file.accept(ProcessVisitor(project))
+                file.accept(ProcessVisitor(project, enableGrouping))
             }
         }
 
@@ -362,7 +367,13 @@ class GroupElements(
         } else {
             OCElementFactory.expressionFromText("(*((${type.toPointerName(context)})0))", context)!!
         }
-        expr.accept(ProcessVisitor(project))
+        expr.accept(
+            ProcessVisitor(
+                project,
+                // no grouping is needed in expression level
+                enableGrouping = false
+            )
+        )
         return expr
     }
 
@@ -480,7 +491,7 @@ class GroupElements(
     }
 
     private fun deleteElement(element: PsiElement) {
-        if (element is OCStatement){
+        if (element is OCStatement) {
             val parent = element.parent
             if (parent is OCFunctionDeclaration && parent.body === element) {
                 val emptyBlock = OCElementFactory.statementFromText("{}", element.context!!)
@@ -520,7 +531,9 @@ class GroupElements(
         return false // todo
     }
 
-    fun preReconstructDependencies(): Pair<List<Pair<PsiElement, () -> Unit>>, Set<PsiWrapper<PsiElement>>> {
+    fun preReconstructDependencies(
+        enableGrouping: Boolean
+    ): Pair<List<Pair<PsiElement, () -> Unit>>, Set<PsiWrapper<PsiElement>>> {
         @Suppress("UNCHECKED_CAST")
         val files = elements.keys.filter { it.element is PsiFile }.map { it.element } as List<PsiFile>
         // we must resolve reference first. Otherwise, the reference will lose after delete.
@@ -577,7 +590,7 @@ class GroupElements(
                                 }
                                 for ((i, param) in parameters.withIndex()) {
                                     if (i >= element.arguments.size) break
-                                    if (param.shouldBeDeleted()) {
+                                    if (param.shouldBeDeleted() && enableGrouping) {
                                         needDeleteElements.add(PsiWrapper.of(element.arguments[i]))
                                     }
                                 }

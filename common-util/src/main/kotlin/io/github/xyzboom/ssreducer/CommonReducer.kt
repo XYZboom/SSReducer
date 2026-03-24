@@ -136,6 +136,17 @@ abstract class CommonReducer(
             }
     }
 
+    protected val enableGrouping by run<OptionDelegate<Boolean>> {
+        option("--enableGrouping")
+            .boolean()
+            .default(true)
+            .help {
+                """Enable grouping of elements. 
+                    |If disabled, each element will be reduced independently, 
+                    |which may lead to more predictions. Default is true.""".trimMargin()
+            }
+    }
+
     /**
      * Predict script execution times, including those canceled.
      */

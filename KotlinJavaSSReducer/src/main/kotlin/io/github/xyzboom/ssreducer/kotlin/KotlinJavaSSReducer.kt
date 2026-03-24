@@ -33,6 +33,7 @@ import kotlin.time.measureTime
 class KotlinJavaSSReducer : CommonReducer(workingDir), IReducer {
     companion object {
         private val logger = KotlinLogging.logger {}
+
         @JvmStatic
         fun main(args: Array<String>) {
             KotlinJavaSSReducer().main(args)
@@ -118,7 +119,10 @@ class KotlinJavaSSReducer : CommonReducer(workingDir), IReducer {
                         DDMin@{
                             val group = currentGroup.copyOf(it.associateWith { currentLevel } + notCurrentElements)
                             CodeStyle.runWithLocalSettings(project, settings, Runnable {
-                                val rdCount = group.reconstructDependencies(rdProb, Random(seed))
+                                val rdCount = group.reconstructDependencies(
+                                    enableGrouping,
+                                    rdProb, Random(seed)
+                                )
                                 reconstructedCount.fetchAndAdd(rdCount)
                             })
                             val fileContents = group.fileContents()
