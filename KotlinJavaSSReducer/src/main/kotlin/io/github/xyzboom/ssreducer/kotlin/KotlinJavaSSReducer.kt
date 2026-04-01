@@ -15,6 +15,9 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import io.github.xyzboom.ssreducer.*
 import io.github.xyzboom.ssreducer.algorithm.DDMin
 import io.github.xyzboom.ssreducer.algorithm.DDMinConcurrent
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import org.apache.commons.csv.CSVFormat
 import org.apache.commons.csv.CSVPrinter
 import org.jetbrains.kotlin.analysis.api.KaExperimentalApi
@@ -23,6 +26,9 @@ import org.jetbrains.kotlin.config.JvmTarget
 import org.jetbrains.kotlin.config.LanguageVersion
 import org.jetbrains.kotlin.idea.KotlinLanguage
 import java.io.File
+import kotlin.collections.component1
+import kotlin.collections.component2
+import kotlin.collections.iterator
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.random.Random
 import kotlin.time.Duration
@@ -78,9 +84,23 @@ class KotlinJavaSSReducer : CommonReducer(workingDir), IReducer {
     private val startMark = TimeSource.Monotonic.markNow()
     private val profiler = mutableListOf<Pair<Duration, Map<String, String>>>()
 
-    private fun profile(fileContents: Map<String, String>) {
+    private fun profile(fileContents: Map<String, String>, project: Project) {
         val elapsed = startMark.elapsedNow()
         profiler.add(elapsed to fileContents)
+        CoroutineScope(Dispatchers.Default)
+            .launch {
+                var allTokens = 0L
+                for ((file, content) in fileContents) {
+                    val language = if (file.endsWith(".java")) {
+                        JavaLanguage.INSTANCE
+                    } else {
+                        KotlinLanguage.INSTANCE
+                    }
+                    val tokens = countTokens(content, language, project)
+                    allTokens += tokens
+                }
+                logger.info { "remain tokens: $allTokens" }
+            }
     }
 
     @OptIn(KaExperimentalApi::class)
@@ -133,7 +153,7 @@ class KotlinJavaSSReducer : CommonReducer(workingDir), IReducer {
                         onSuccess@{ _, (remainGroup, fileContents) ->
                             currentGroup = remainGroup.applyEdit()
                             currentFileContents = fileContents
-                            profile(fileContents)
+                            profile(fileContents, project)
                         }
                     val ddmin = if (jobs == 1) {
                         DDMin(predict, onSuccess)
